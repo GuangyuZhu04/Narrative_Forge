@@ -1,12 +1,18 @@
 from typing import AsyncIterator
 
+from app.llm.providers.anthropic import AnthropicProvider
 from app.llm.providers.base import LLMProvider
 from app.llm.providers.deepseek import DeepSeekProvider
+from app.llm.providers.google import GoogleProvider
+from app.llm.providers.openai import OpenAIProvider
 from app.llm.providers.openai_compatible import OpenAICompatibleProvider
 from app.llm.rate_limiter import TokenBucketRateLimiter
 
 PROVIDER_MAP = {
     "deepseek": DeepSeekProvider,
+    "openai": OpenAIProvider,
+    "anthropic": AnthropicProvider,
+    "google": GoogleProvider,
     "openai_compatible": OpenAICompatibleProvider,
 }
 
@@ -47,7 +53,6 @@ class LLMOrchestrator:
     async def _load_provider(self, config_id: str) -> LLMProvider:
         from app.db.session import AsyncSessionLocal
         from app.models.llm_config import LLMConfig
-        from sqlalchemy import select
 
         async with AsyncSessionLocal() as db:
             config = await db.get(LLMConfig, config_id)

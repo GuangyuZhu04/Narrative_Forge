@@ -4,6 +4,7 @@ import { llmConfigApi } from '@/services/api'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
+import { Select } from '@/components/ui/Select'
 import { SystemPromptSettings } from '@/modules/system-settings/SystemPromptSettings'
 import {
   Plus,
@@ -17,6 +18,55 @@ import {
 import type { LLMConfig } from '@/types'
 
 const ACTIVE_LLM_KEY = 'nwa_active_llm_config_id'
+
+const PROVIDER_PRESETS = {
+  deepseek: {
+    label: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com',
+    models: ['deepseek-v4-pro'],
+    messageFormat: 'OpenAI Chat Completions: messages[]',
+  },
+  openai: {
+    label: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    models: ['gpt-5.5'],
+    messageFormat: 'Responses API: instructions + input[]',
+  },
+  anthropic: {
+    label: 'Anthropic',
+    baseUrl: 'https://api.anthropic.com/v1',
+    models: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5'],
+    messageFormat: 'Messages API: system + messages[]',
+  },
+  google: {
+    label: 'Google Gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    models: [
+      'gemini-3.5-flash',
+      'gemini-3.5-flash-lite-preview',
+      'gemini-3.1-pro',
+      'gemini-3.0-flash',
+      'gemini-3.1-flash-lite',
+    ],
+    messageFormat: 'Gemini API: systemInstruction + contents[]',
+  },
+  openai_compatible: {
+    label: 'OpenAI Compatible',
+    baseUrl: 'https://api.openai.com/v1',
+    models: ['deepseek-v4-pro', 'gpt-5.5'],
+    messageFormat: 'OpenAI Chat Completions: messages[]',
+  },
+}
+
+type ProviderKey = keyof typeof PROVIDER_PRESETS
+
+const providerOptions = Object.entries(PROVIDER_PRESETS).map(([value, preset]) => ({
+  value,
+  label: preset.label,
+}))
+
+const getProviderPreset = (provider: string) =>
+  PROVIDER_PRESETS[provider as ProviderKey] || PROVIDER_PRESETS.openai_compatible
 
 export const LLMConfigPanel: React.FC = () => {
   const navigate = useNavigate()
@@ -33,6 +83,8 @@ export const LLMConfigPanel: React.FC = () => {
     base_url: 'https://api.deepseek.com',
     model_name: 'deepseek-v4-pro',
   })
+  const selectedPreset = getProviderPreset(newConfig.provider)
+  const modelDatalistId = 'llm-model-presets'
 
   useEffect(() => {
     loadConfigs()
@@ -59,6 +111,16 @@ export const LLMConfigPanel: React.FC = () => {
     if (created.id) {
       handleSetActive(created.id)
     }
+  }
+
+  const handleProviderChange = (provider: string) => {
+    const preset = getProviderPreset(provider)
+    setNewConfig({
+      ...newConfig,
+      provider,
+      base_url: preset.baseUrl,
+      model_name: preset.models[0],
+    })
   }
 
   const handleSetActive = (id: string) => {
@@ -206,14 +268,18 @@ export const LLMConfigPanel: React.FC = () => {
         title="添加 LLM 配置"
       >
         <div className="space-y-4">
-          <Input
+          <Select
             label="服务商"
             value={newConfig.provider}
-            onChange={(e) =>
-              setNewConfig({ ...newConfig, provider: e.target.value })
-            }
-            placeholder="deepseek / openai_compatible"
+            onChange={(e) => handleProviderChange(e.target.value)}
+            options={providerOptions}
           />
+          <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+            <p>消息格式：{selectedPreset.messageFormat}</p>
+            <p className="mt-1">
+              推荐模型：{selectedPreset.models.join(' / ')}
+            </p>
+          </div>
           <Input
             label="API 密钥"
             type="password"
@@ -236,7 +302,13 @@ export const LLMConfigPanel: React.FC = () => {
             onChange={(e) =>
               setNewConfig({ ...newConfig, model_name: e.target.value })
             }
+            list={modelDatalistId}
           />
+          <datalist id={modelDatalistId}>
+            {selectedPreset.models.map((model) => (
+              <option key={model} value={model} />
+            ))}
+          </datalist>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setShowCreate(false)}>
               取消

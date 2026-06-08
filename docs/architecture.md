@@ -391,7 +391,7 @@ CharacterRelationship
 ```
 LLMConfig
 ├── id: UUID
-├── provider: string (deepseek | openai_compatible)
+├── provider: string (deepseek | openai | anthropic | google | openai_compatible)
 ├── api_key_encrypted: string (AES-256-GCM 加密，base64 密文)
 ├── base_url: string
 ├── model_name: string
@@ -788,7 +788,7 @@ narrative-forge/
 │   │   ├── schemas/               # Pydantic 模式（请求/响应）
 │   │   ├── services/              # 业务逻辑（project/outline/character/chapter/consistency/export/llm_orchestrator）
 │   │   ├── llm/                   # LLM 集成
-│   │   │   ├── providers/         # base / deepseek / openai_compatible
+│   │   │   ├── providers/         # base / deepseek / openai / anthropic / google / openai_compatible
 │   │   │   ├── prompts/           # outline / chapter / consistency / novel_write
 │   │   │   └── rate_limiter.py
 │   │   ├── db/                    # session / init_db

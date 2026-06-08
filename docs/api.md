@@ -1277,12 +1277,22 @@ POST /api/v1/llm-configs
 
 | 字段 | 类型 | 必填 | 描述 |
 |------|------|------|------|
-| provider | string | 是 | 服务商：deepseek / openai_compatible |
+| provider | string | 是 | 服务商：`deepseek` / `openai` / `anthropic` / `google` / `openai_compatible` |
 | api_key | string | 是 | API 密钥（明文，服务端加密存储） |
 | base_url | string | 是 | API 基础地址 |
 | model_name | string | 是 | 模型名称 |
 | default_params | object | 否 | 默认参数 |
 | rate_limit | object | 否 | 频率限制 |
+
+**Provider 对照**：
+
+| provider | 默认 Base URL | 推荐模型 | 请求格式 |
+|----------|---------------|----------|----------|
+| `deepseek` | `https://api.deepseek.com` | `deepseek-v4-pro` | OpenAI Chat Completions `messages[]` |
+| `openai` | `https://api.openai.com/v1` | `gpt-5.5` | Responses API `instructions` + `input[]` |
+| `anthropic` | `https://api.anthropic.com/v1` | `claude-sonnet-4-6` / `claude-opus-4-8` / `claude-haiku-4-5` | Messages API `system` + `messages[]` |
+| `google` | `https://generativelanguage.googleapis.com/v1beta` | `gemini-3.5-flash` / `gemini-3.1-pro` | Gemini `systemInstruction` + `contents[]` |
+| `openai_compatible` | 自定义 | 由兼容服务决定 | OpenAI Chat Completions `messages[]` |
 
 **default_params 对象**：
 

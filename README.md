@@ -187,12 +187,14 @@ npx tsc --noEmit
 1. 打开应用，点击左侧导航「设置」
 2. 点击「添加配置」
 3. 填写 LLM 服务商信息：
-   - 服务商：`deepseek` 或 `openai_compatible`
+   - 服务商：`deepseek` / `openai` / `anthropic` / `google` / `openai_compatible`
    - API 密钥：你的 LLM API Key
-   - Base URL：API 地址（如 `https://api.deepseek.com`）
-   - 模型名称：如 `deepseek-v4-pro`
+   - Base URL：API 地址（如 `https://api.deepseek.com`、`https://api.openai.com/v1`）
+   - 模型名称：如 `deepseek-v4-pro`、`gpt-5.5`、`claude-sonnet-4-6`、`gemini-3.5-flash`
 4. 点击「创建」
 5. 点击「测试连接」验证配置是否正确
+
+不同服务商的推荐模型和消息格式见 [LLM Provider 支持](docs/llm-providers.md)。
 
 ### 第二步：创建项目
 

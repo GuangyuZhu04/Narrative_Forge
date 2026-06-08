@@ -1,11 +1,13 @@
-import httpx
+import time
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.models.llm_config import LLMConfig
-from app.core.security import encrypt_api_key, decrypt_api_key
+from app.core.security import encrypt_api_key
+from app.llm.providers.openai_compatible import OpenAICompatibleProvider
+from app.services.llm_orchestrator import PROVIDER_MAP
 from app.schemas.llm_config import (
     LLMConfigCreate,
     LLMConfigUpdate,
@@ -117,36 +119,32 @@ async def test_config(
         raise LLMConfigInactiveException()
 
     try:
-        api_key = decrypt_api_key(config.api_key_encrypted)
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{config.base_url}/chat/completions",
-                json={
-                    "model": config.model_name,
-                    "messages": [{"role": "user", "content": "Hi"}],
-                    "max_tokens": 5,
-                },
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-            latency_ms = int(resp.elapsed.total_seconds() * 1000)
-            if resp.status_code == 200:
-                return LLMConfigTestResponse(
-                    success=True,
-                    message="连接成功",
-                    model_info={
-                        "model_name": config.model_name,
-                        "latency_ms": latency_ms,
-                    },
-                )
-            else:
-                return LLMConfigTestResponse(
-                    success=False,
-                    message=f"认证失败：HTTP {resp.status_code}",
-                    model_info=None,
-                )
+        provider_cls = PROVIDER_MAP.get(config.provider, OpenAICompatibleProvider)
+        provider = provider_cls(
+            {
+                "provider": config.provider,
+                "api_key_encrypted": config.api_key_encrypted,
+                "base_url": config.base_url,
+                "model_name": config.model_name,
+                "default_params": config.default_params or {},
+                "rate_limit": config.rate_limit,
+            }
+        )
+        started = time.perf_counter()
+        await provider.chat_completion(
+            [{"role": "user", "content": "Hi"}],
+            max_tokens=16,
+        )
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        return LLMConfigTestResponse(
+            success=True,
+            message="连接成功",
+            model_info={
+                "provider": config.provider,
+                "model_name": config.model_name,
+                "latency_ms": latency_ms,
+            },
+        )
     except Exception as e:
         return LLMConfigTestResponse(
             success=False, message=str(e), model_info=None

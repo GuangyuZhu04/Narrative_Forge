@@ -172,15 +172,20 @@ class OpenAIProvider(LLMProvider):
 ```python
 PROVIDER_MAP = {
     "deepseek": DeepSeekProvider,
+    "openai": OpenAIProvider,
+    "anthropic": AnthropicProvider,
+    "google": GoogleProvider,
     "openai_compatible": OpenAICompatibleProvider,
-    "openai": OpenAIProvider,   # ← 新增
 }
 ```
 
 3. 在 `backend/app/schemas/llm_config.py` 的 `LLMConfigCreate` / `LLMConfigUpdate` 的 `pattern` 里加上新 provider：
 
 ```python
-provider: str = Field(..., pattern="^(deepseek|openai_compatible|openai)$")
+provider: str = Field(
+    ...,
+    pattern="^(deepseek|openai|anthropic|google|openai_compatible)$",
+)
 ```
 
 4. 前端 `frontend/src/modules/llm-config/LLMConfigPanel.tsx` 的 provider 下拉框加上新选项。

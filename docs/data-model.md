@@ -334,7 +334,7 @@ VOLUME (卷)
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `id` | UUID | 自动 | - |
-| `provider` | VARCHAR(50) | ✓ | `deepseek` / `openai_compatible` |
+| `provider` | VARCHAR(50) | ✓ | `deepseek` / `openai` / `anthropic` / `google` / `openai_compatible` |
 | `api_key_encrypted` | VARCHAR | ✓ | **加密后**的 API 密钥（base64 密文） |
 | `base_url` | VARCHAR(500) | ✓ | API base URL |
 | `model_name` | VARCHAR(100) | ✓ | 模型名 |

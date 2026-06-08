@@ -5,7 +5,10 @@ from pydantic import BaseModel, Field
 
 
 class LLMConfigCreate(BaseModel):
-    provider: str = Field(..., pattern="^(deepseek|openai_compatible)$")
+    provider: str = Field(
+        ...,
+        pattern="^(deepseek|openai|anthropic|google|openai_compatible)$",
+    )
     api_key: str
     base_url: str
     model_name: str
@@ -14,7 +17,10 @@ class LLMConfigCreate(BaseModel):
 
 
 class LLMConfigUpdate(BaseModel):
-    provider: str | None = Field(None, pattern="^(deepseek|openai_compatible)$")
+    provider: str | None = Field(
+        None,
+        pattern="^(deepseek|openai|anthropic|google|openai_compatible)$",
+    )
     api_key: str | None = None
     base_url: str | None = None
     model_name: str | None = None
