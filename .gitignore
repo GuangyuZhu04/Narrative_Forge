@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+
+# Runtime data and user content
+.env
+.env.*
+!.env.example
+data/*
+backend/data/*
+!data/.gitkeep
+!backend/data/.gitkeep
+uploads/
+**/uploads/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs and local artifacts
+*.log
+.DS_Store
+Thumbs.db
+coverage/
+htmlcov/
+*.tmp

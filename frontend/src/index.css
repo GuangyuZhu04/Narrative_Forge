@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@plugin "@tailwindcss/typography";
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
