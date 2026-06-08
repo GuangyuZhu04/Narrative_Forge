@@ -190,7 +190,7 @@ npx tsc --noEmit
    - 服务商：`deepseek` 或 `openai_compatible`
    - API 密钥：你的 LLM API Key
    - Base URL：API 地址（如 `https://api.deepseek.com`）
-   - 模型名称：如 `deepseek-chat`
+   - 模型名称：如 `deepseek-v4-pro`
 4. 点击「创建」
 5. 点击「测试连接」验证配置是否正确
 

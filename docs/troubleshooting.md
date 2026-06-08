@@ -313,7 +313,7 @@ curl -X POST http://localhost:5173/api/v1/llm-configs -H "Content-Type: applicat
   "provider": "openai_compatible",
   "api_key": "sk-test",
   "base_url": "https://api.deepseek.com",
-  "model_name": "deepseek-chat"
+  "model_name": "deepseek-v4-pro"
 }'
 # 然后调用 test 端点
 curl -X POST http://localhost:5173/api/v1/llm-configs/<id>/test

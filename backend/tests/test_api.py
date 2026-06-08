@@ -147,7 +147,7 @@ async def test_create_llm_config():
                 "provider": "deepseek",
                 "api_key": "sk-test-key",
                 "base_url": "https://api.deepseek.com",
-                "model_name": "deepseek-chat",
+                "model_name": "deepseek-v4-pro",
             },
         )
         assert response.status_code == 201
@@ -220,7 +220,7 @@ async def test_list_llm_configs():
                 "provider": "deepseek",
                 "api_key": "sk-test",
                 "base_url": "https://api.deepseek.com",
-                "model_name": "deepseek-chat",
+                "model_name": "deepseek-v4-pro",
             },
         )
         response = await client.get("/api/v1/llm-configs")

@@ -23,7 +23,7 @@ class DeepSeekProvider(LLMProvider):
     def __init__(self, config: dict):
         super().__init__(config)
         self.api_key = decrypt_api_key(config["api_key_encrypted"])
-        self.model = config.get("model_name", "deepseek-chat")
+        self.model = config.get("model_name", "deepseek-v4-pro")
         self.base_url = config.get("base_url", self.API_BASE)
         # dict.get only returns the default when the key is MISSING; if the key
         # is present with a None value (e.g. unconfigured LLM rows), fall

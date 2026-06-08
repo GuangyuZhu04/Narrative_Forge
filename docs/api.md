@@ -1239,7 +1239,7 @@ GET /api/v1/llm-configs
       "provider": "deepseek",
       "api_key_encrypted": "****masked****",
       "base_url": "https://api.deepseek.com",
-      "model_name": "deepseek-chat",
+      "model_name": "deepseek-v4-pro",
       "default_params": {
         "temperature": 0.7,
         "top_p": 0.9,
@@ -1309,7 +1309,7 @@ POST /api/v1/llm-configs
   "provider": "deepseek",
   "api_key": "YOUR_API_KEY",
   "base_url": "https://api.deepseek.com",
-  "model_name": "deepseek-chat",
+  "model_name": "deepseek-v4-pro",
   "default_params": {
     "temperature": 0.7,
     "top_p": 0.9,
@@ -1349,7 +1349,7 @@ POST /api/v1/llm-configs/{config_id}/test
   "success": true,
   "message": "连接成功",
   "model_info": {
-    "model_name": "deepseek-chat",
+    "model_name": "deepseek-v4-pro",
     "latency_ms": 320
   }
 }
@@ -1448,7 +1448,7 @@ curl -X POST http://localhost:8000/api/v1/llm-configs \
     "provider": "deepseek",
     "api_key": "YOUR_API_KEY",
     "base_url": "https://api.deepseek.com",
-    "model_name": "deepseek-chat",
+    "model_name": "deepseek-v4-pro",
     "default_params": {"temperature": 0.7, "top_p": 0.9, "max_tokens": 4096},
     "rate_limit": {"requests_per_minute": 30, "max_concurrent": 3}
   }'

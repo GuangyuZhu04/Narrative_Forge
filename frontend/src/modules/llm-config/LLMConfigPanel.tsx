@@ -31,7 +31,7 @@ export const LLMConfigPanel: React.FC = () => {
     provider: 'deepseek',
     api_key: '',
     base_url: 'https://api.deepseek.com',
-    model_name: 'deepseek-chat',
+    model_name: 'deepseek-v4-pro',
   })
 
   useEffect(() => {
@@ -52,7 +52,7 @@ export const LLMConfigPanel: React.FC = () => {
       provider: 'deepseek',
       api_key: '',
       base_url: 'https://api.deepseek.com',
-      model_name: 'deepseek-chat',
+      model_name: 'deepseek-v4-pro',
     })
     setShowCreate(false)
     await loadConfigs()

@@ -14,7 +14,7 @@ from app.llm.providers.openai_compatible import OpenAICompatibleProvider  # noqa
 def _config(default_params=None):
     return {
         "api_key_encrypted": encrypt_api_key("sk-test"),
-        "model_name": "deepseek-chat",
+        "model_name": "deepseek-v4-pro",
         "base_url": "https://api.deepseek.com",
         "default_params": default_params or {},
     }
