@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+import sys
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
@@ -21,6 +23,15 @@ from app.api.v1 import (
 )
 from app.db.session import engine
 from app.models.base import Base
+
+
+def resource_path(*parts: str) -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS")).joinpath(*parts)
+    return Path(__file__).resolve().parents[3].joinpath(*parts)
+
+
+FRONTEND_DIST = resource_path("frontend_dist")
 
 
 async def ensure_runtime_schema(conn):
@@ -78,3 +89,25 @@ async def app_exception_handler(request: Request, exc: AppException):
         status_code=exc.status_code,
         content={"detail": exc.detail, "error_code": exc.error_code},
     )
+
+
+if FRONTEND_DIST.exists():
+    assets_dir = FRONTEND_DIST / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def frontend_favicon():
+        favicon = FRONTEND_DIST / "favicon.svg"
+        if favicon.exists():
+            return FileResponse(favicon)
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_frontend(full_path: str):
+        target = FRONTEND_DIST / full_path
+        if target.is_file():
+            return FileResponse(target)
+        return FileResponse(FRONTEND_DIST / "index.html")

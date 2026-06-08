@@ -15,6 +15,8 @@ node_modules/
 frontend/node_modules/
 dist/
 frontend/dist/
+build/
+.run/
 
 # Runtime data and user content
 .env

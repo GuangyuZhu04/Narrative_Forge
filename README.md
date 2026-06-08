@@ -43,6 +43,8 @@ narrative-forge/
 
 > 开源副本不包含本地数据库、上传图片、日志、`.env` 或任何用户小说内容。详见 [OPEN_SOURCE.md](OPEN_SOURCE.md)。
 
+> Windows 单文件 exe 构建与运行说明见 [WINDOWS_EXE.md](WINDOWS_EXE.md)。
+
 ---
 
 ## 3. 后端启动
