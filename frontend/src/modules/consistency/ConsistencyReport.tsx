@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useLocation, useParams } from 'react-router-dom'
 import { analysisApi, getActiveLLMConfigId } from '@/services/api'
 import { Button } from '@/components/ui/Button'
 import { Shield, AlertTriangle, CheckCircle } from 'lucide-react'
@@ -78,10 +78,14 @@ const formatUnknownItem = (value: unknown): string => {
 
 export const ConsistencyReport: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>()
+  const location = useLocation()
   const [reports, setReports] = useState<ReportItem[]>([])
   const [chapters, setChapters] = useState<ChapterItem[]>([])
   const [selectedChapter, setSelectedChapter] = useState<string>('')
   const [analyzing, setAnalyzing] = useState(false)
+  const isActive = projectId
+    ? location.pathname === `/projects/${projectId}/consistency`
+    : false
 
   const fetchReports = async (chapterId = selectedChapter) => {
     if (!projectId) return
@@ -93,7 +97,7 @@ export const ConsistencyReport: React.FC = () => {
   }
 
   useEffect(() => {
-    if (!projectId) return
+    if (!projectId || !isActive) return
     let cancelled = false
 
     const loadChapters = async () => {
@@ -116,10 +120,10 @@ export const ConsistencyReport: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [projectId])
+  }, [projectId, isActive])
 
   useEffect(() => {
-    if (!projectId) return
+    if (!projectId || !isActive) return
     let cancelled = false
 
     const loadReports = async () => {
@@ -136,7 +140,7 @@ export const ConsistencyReport: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [projectId, selectedChapter])
+  }, [projectId, selectedChapter, isActive])
 
   const handleAnalyze = async () => {
     const cfgId = await getActiveLLMConfigId()
