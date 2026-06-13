@@ -19,6 +19,20 @@ from app.core.exceptions import LLMConfigNotFoundException, LLMConfigInactiveExc
 router = APIRouter()
 
 MASKED_KEY = "****masked****"
+TEST_CONNECTION_MAX_TOKENS = 64
+
+
+def _test_connection_kwargs(provider: str) -> dict:
+    kwargs = {"max_tokens": TEST_CONNECTION_MAX_TOKENS}
+    if provider == "deepseek":
+        kwargs.update(
+            {
+                "_force_max_thinking": False,
+                "thinking": None,
+                "reasoning_effort": None,
+            }
+        )
+    return kwargs
 
 
 @router.get("")
@@ -132,8 +146,14 @@ async def test_config(
         )
         started = time.perf_counter()
         await provider.chat_completion(
-            [{"role": "user", "content": "Hi"}],
-            max_tokens=16,
+            [
+                {
+                    "role": "system",
+                    "content": "You are testing an API connection. Reply with exactly OK.",
+                },
+                {"role": "user", "content": "OK"},
+            ],
+            **_test_connection_kwargs(config.provider),
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
         return LLMConfigTestResponse(

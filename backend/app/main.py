@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+import sys
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
@@ -22,6 +24,50 @@ from app.api.v1 import (
 )
 from app.db.session import engine
 from app.models.base import Base
+
+
+def find_frontend_dist() -> Path | None:
+    candidates: list[Path] = []
+    bundled_root = getattr(sys, "_MEIPASS", None)
+    if bundled_root:
+        candidates.append(Path(bundled_root) / "frontend_dist")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    candidates.extend(
+        [
+            repo_root / "frontend" / "dist",
+            Path.cwd() / "frontend_dist",
+        ]
+    )
+
+    for candidate in dict.fromkeys(candidates):
+        if (candidate / "index.html").is_file():
+            return candidate
+    return None
+
+
+def mount_frontend(app: FastAPI) -> None:
+    frontend_dist = find_frontend_dist()
+    if not frontend_dist:
+        return
+
+    assets_dir = frontend_dist / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="frontend-assets")
+
+    @app.get("/", include_in_schema=False)
+    async def serve_frontend_index():
+        return FileResponse(frontend_dist / "index.html")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def serve_frontend_path(path: str):
+        if path.startswith(("api/", "uploads/")):
+            raise HTTPException(status_code=404)
+
+        target = (frontend_dist / path).resolve()
+        if frontend_dist.resolve() in (target, *target.parents) and target.is_file():
+            return FileResponse(target)
+        return FileResponse(frontend_dist / "index.html")
 
 
 async def ensure_runtime_schema(conn):
@@ -72,6 +118,7 @@ app.include_router(
     prefix="/api/v1/system-settings",
     tags=["System Settings"],
 )
+mount_frontend(app)
 
 
 @app.exception_handler(AppException)

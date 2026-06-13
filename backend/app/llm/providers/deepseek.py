@@ -89,6 +89,7 @@ class DeepSeekProvider(LLMProvider):
         self, messages: list[dict], stream: bool, **kwargs
     ) -> dict:
         params = {**(self.default_params or {}), **kwargs}
+        force_max_thinking = params.pop("_force_max_thinking", self.FORCE_MAX_THINKING)
         payload = {
             "model": self.model,
             "messages": messages,
@@ -102,7 +103,7 @@ class DeepSeekProvider(LLMProvider):
         if uses_json_mode:
             payload.pop("thinking", None)
             payload.pop("reasoning_effort", None)
-        elif self.FORCE_MAX_THINKING:
+        elif force_max_thinking:
             payload["thinking"] = {"type": "enabled"}
             payload["reasoning_effort"] = "max"
         return payload
