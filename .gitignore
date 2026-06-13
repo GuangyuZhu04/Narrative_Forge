@@ -13,7 +13,7 @@ venv/
 # Node / frontend
 node_modules/
 frontend/node_modules/
-dist/
+# dist/
 frontend/dist/
 build/
 .run/
