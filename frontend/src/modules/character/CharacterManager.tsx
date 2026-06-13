@@ -76,56 +76,151 @@ const emptyForm = {
   notes: '',
 }
 
-const formToCharacterData = (form: typeof emptyForm) => {
+const toEditableText = (value: unknown): string => {
+  if (value == null) return ''
+  if (Array.isArray(value)) return value.map(toEditableText).filter(Boolean).join('、')
+  if (typeof value === 'object') return JSON.stringify(value, null, 2)
+  return String(value)
+}
+
+const asRecord = (value: Record<string, unknown> | null | undefined) =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+
+const getProfileValue = (
+  data: Record<string, unknown> | null | undefined,
+  keys: string[]
+) => {
+  const record = asRecord(data)
+  for (const key of keys) {
+    if (record[key] != null && record[key] !== '') return toEditableText(record[key])
+  }
+  return ''
+}
+
+const setProfileValue = (
+  data: Record<string, unknown>,
+  keys: string[],
+  canonicalKey: string,
+  value: string
+) => {
+  keys.forEach((key) => {
+    delete data[key]
+  })
+  if (value.trim()) data[canonicalKey] = value.trim()
+}
+
+const withNullableText = (
+  value: string,
+  originalValue: string | null | undefined
+) => {
+  const trimmed = value.trim()
+  if (trimmed) return trimmed
+  return originalValue ? null : undefined
+}
+
+const formToCharacterData = (
+  form: typeof emptyForm,
+  original?: CharacterItem | null
+) => {
   const aliases = form.aliases
     ? form.aliases.split(/[,，、]/).map((s) => s.trim()).filter(Boolean)
-    : undefined
+    : original?.aliases?.length
+      ? null
+      : undefined
 
-  const basicInfo: Record<string, string> = {}
-  if (form.age) basicInfo['年龄'] = form.age
-  if (form.gender) basicInfo['性别'] = form.gender
-  if (form.background) basicInfo['背景'] = form.background
-  if (form.occupation) basicInfo['职业'] = form.occupation
+  const basicInfo: Record<string, unknown> = { ...asRecord(original?.basic_info) }
+  setProfileValue(basicInfo, ['年龄', 'age'], '年龄', form.age)
+  setProfileValue(basicInfo, ['性别', 'gender'], '性别', form.gender)
+  setProfileValue(
+    basicInfo,
+    ['背景', 'background', 'background_story'],
+    '背景',
+    form.background
+  )
+  setProfileValue(basicInfo, ['职业', 'occupation'], '职业', form.occupation)
 
-  const personality: Record<string, string> = {}
-  if (form.traits) personality['性格特征'] = form.traits
-  if (form.values) personality['价值观'] = form.values
-  if (form.habits) personality['习惯'] = form.habits
-  if (form.flaws) personality['缺陷'] = form.flaws
+  const personality: Record<string, unknown> = { ...asRecord(original?.personality) }
+  setProfileValue(personality, ['性格特征', 'traits'], '性格特征', form.traits)
+  setProfileValue(personality, ['价值观', 'values'], '价值观', form.values)
+  setProfileValue(personality, ['习惯', 'habits'], '习惯', form.habits)
+  setProfileValue(personality, ['缺陷', 'flaws'], '缺陷', form.flaws)
 
-  const growthArc: Record<string, string> = {}
-  if (form.initial_state) growthArc['初始状态'] = form.initial_state
-  if (form.development_direction) growthArc['发展方向'] = form.development_direction
-  if (form.turning_point) growthArc['转折点'] = form.turning_point
-  if (form.final_state) growthArc['最终状态'] = form.final_state
+  const growthArc: Record<string, unknown> = { ...asRecord(original?.growth_arc) }
+  setProfileValue(
+    growthArc,
+    ['初始状态', 'starting_state', 'initial_state'],
+    '初始状态',
+    form.initial_state
+  )
+  setProfileValue(
+    growthArc,
+    ['发展方向', 'development_direction', 'transformation'],
+    '发展方向',
+    form.development_direction
+  )
+  setProfileValue(
+    growthArc,
+    ['转折点', 'turning_point', 'catalyst'],
+    '转折点',
+    form.turning_point
+  )
+  setProfileValue(
+    growthArc,
+    ['最终状态', 'final_state', 'ending_state'],
+    '最终状态',
+    form.final_state
+  )
 
   return {
-    name: form.name,
+    name: form.name.trim(),
     aliases,
     basic_info: Object.keys(basicInfo).length > 0 ? basicInfo : undefined,
     personality: Object.keys(personality).length > 0 ? personality : undefined,
     growth_arc: Object.keys(growthArc).length > 0 ? growthArc : undefined,
-    biography: form.biography || undefined,
-    setting_collection: form.setting_collection || undefined,
-    notes: form.notes || undefined,
+    biography: withNullableText(form.biography, original?.biography),
+    setting_collection: withNullableText(
+      form.setting_collection,
+      original?.setting_collection
+    ),
+    notes: withNullableText(form.notes, original?.notes),
   }
 }
 
 const characterToForm = (c: CharacterItem): typeof emptyForm => ({
   name: c.name || '',
-  aliases: c.aliases?.join('、') || '',
-  age: (c.basic_info as Record<string, string>)?.['年龄'] || '',
-  gender: (c.basic_info as Record<string, string>)?.['性别'] || '',
-  background: (c.basic_info as Record<string, string>)?.['背景'] || '',
-  occupation: (c.basic_info as Record<string, string>)?.['职业'] || '',
-  traits: (c.personality as Record<string, string>)?.['性格特征'] || '',
-  values: (c.personality as Record<string, string>)?.['价值观'] || '',
-  habits: (c.personality as Record<string, string>)?.['习惯'] || '',
-  flaws: (c.personality as Record<string, string>)?.['缺陷'] || '',
-  initial_state: (c.growth_arc as Record<string, string>)?.['初始状态'] || '',
-  development_direction: (c.growth_arc as Record<string, string>)?.['发展方向'] || '',
-  turning_point: (c.growth_arc as Record<string, string>)?.['转折点'] || '',
-  final_state: (c.growth_arc as Record<string, string>)?.['最终状态'] || '',
+  aliases: Array.isArray(c.aliases) ? c.aliases.join('、') : '',
+  age: getProfileValue(c.basic_info, ['年龄', 'age']),
+  gender: getProfileValue(c.basic_info, ['性别', 'gender']),
+  background: getProfileValue(c.basic_info, [
+    '背景',
+    'background',
+    'background_story',
+  ]),
+  occupation: getProfileValue(c.basic_info, ['职业', 'occupation']),
+  traits: getProfileValue(c.personality, ['性格特征', 'traits']),
+  values: getProfileValue(c.personality, ['价值观', 'values']),
+  habits: getProfileValue(c.personality, ['习惯', 'habits']),
+  flaws: getProfileValue(c.personality, ['缺陷', 'flaws']),
+  initial_state: getProfileValue(c.growth_arc, [
+    '初始状态',
+    'starting_state',
+    'initial_state',
+  ]),
+  development_direction: getProfileValue(c.growth_arc, [
+    '发展方向',
+    'development_direction',
+    'transformation',
+  ]),
+  turning_point: getProfileValue(c.growth_arc, [
+    '转折点',
+    'turning_point',
+    'catalyst',
+  ]),
+  final_state: getProfileValue(c.growth_arc, [
+    '最终状态',
+    'final_state',
+    'ending_state',
+  ]),
   biography: c.biography || '',
   setting_collection: c.setting_collection || '',
   notes: c.notes || '',
@@ -206,7 +301,8 @@ export const CharacterManager: React.FC = () => {
   const handleUpdate = async () => {
     if (!projectId || !editingId || !form.name.trim()) return
     try {
-      const data = formToCharacterData(form)
+      const current = characters.find((c) => c.id === editingId)
+      const data = formToCharacterData(form, current)
       await characterApi.update(projectId, editingId, data)
       setForm(emptyForm)
       setEditingId(null)

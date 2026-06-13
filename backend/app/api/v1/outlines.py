@@ -18,6 +18,7 @@ from app.schemas.outline import (
     OutlineGenerateRequest,
     OutlineExpandRequest,
     OutlineOptimizeRequest,
+    OutlineStructureRequest,
 )
 from app.core.exceptions import OutlineNotFoundException
 
@@ -115,6 +116,24 @@ async def optimize_outline(
         db, data.llm_config_id, outline_id, data.direction
     )
     return result
+
+
+@router.post("/{outline_id}/structure", status_code=201)
+async def structure_outline(
+    project_id: str,
+    outline_id: str,
+    data: OutlineStructureRequest,
+    db: AsyncSession = Depends(get_db),
+    project: Project = Depends(verify_project_access),
+):
+    nodes = await outline_service.structure_outline(
+        db, data.llm_config_id, outline_id, data.params
+    )
+    if nodes is None:
+        raise OutlineNotFoundException()
+    return {
+        "data": [OutlineNodeResponse.model_validate(n).model_dump() for n in nodes]
+    }
 
 
 @router.post("/nodes", response_model=OutlineNodeResponse, status_code=201)

@@ -158,6 +158,53 @@ async def test_create_llm_config():
 
 
 @pytest.mark.anyio
+async def test_deepseek_config_test_uses_lightweight_probe(monkeypatch):
+    captured = {}
+
+    class FakeDeepSeekProvider:
+        def __init__(self, config):
+            captured["config"] = config
+
+        async def chat_completion(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured["kwargs"] = kwargs
+            return "OK"
+
+    from app.api.v1 import llm_config as llm_config_api
+
+    monkeypatch.setitem(
+        llm_config_api.PROVIDER_MAP,
+        "deepseek",
+        FakeDeepSeekProvider,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        create_response = await client.post(
+            "/api/v1/llm-configs",
+            json={
+                "provider": "deepseek",
+                "api_key": "sk-test-key",
+                "base_url": "https://api.deepseek.com",
+                "model_name": "deepseek-v4-pro",
+            },
+        )
+        config_id = create_response.json()["id"]
+
+        response = await client.post(f"/api/v1/llm-configs/{config_id}/test")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert captured["kwargs"]["max_tokens"] == 64
+    assert captured["kwargs"]["_force_max_thinking"] is False
+    assert captured["kwargs"]["thinking"] is None
+    assert captured["kwargs"]["reasoning_effort"] is None
+    assert captured["messages"][0]["role"] == "system"
+
+
+@pytest.mark.anyio
 async def test_system_prompt_settings_update_and_reset():
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"

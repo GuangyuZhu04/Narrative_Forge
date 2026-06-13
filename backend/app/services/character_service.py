@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,8 +27,86 @@ from app.services.system_prompt_service import (
 
 CHARACTER_IMPORT_MAX_TOKENS = 8192 * 2
 
+BASIC_INFO_KEY_ALIASES = {
+    "年龄": ("年龄", "age"),
+    "性别": ("性别", "gender"),
+    "职业": ("职业", "occupation"),
+    "外貌": ("外貌", "appearance"),
+    "背景": ("背景", "background", "background_story"),
+}
+PERSONALITY_KEY_ALIASES = {
+    "性格特征": ("性格特征", "traits"),
+    "MBTI": ("MBTI", "mbti"),
+    "价值观": ("价值观", "values"),
+    "习惯": ("习惯", "habits"),
+    "缺陷": ("缺陷", "flaws"),
+    "说话风格": ("说话风格", "speaking_style"),
+}
+GROWTH_ARC_KEY_ALIASES = {
+    "初始状态": ("初始状态", "starting_state", "initial_state"),
+    "发展方向": ("发展方向", "development_direction", "transformation"),
+    "转折点": ("转折点", "turning_point", "catalyst"),
+    "最终状态": ("最终状态", "final_state", "ending_state"),
+}
+
 
 class CharacterService:
+    @staticmethod
+    def _stringify_profile_value(value: Any) -> Any:
+        if isinstance(value, list):
+            return "、".join(str(item) for item in value if item is not None)
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
+        return value
+
+    def _normalize_profile_section(
+        self, data: Any, aliases: dict[str, tuple[str, ...]]
+    ) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        normalized: dict[str, Any] = {}
+        consumed_keys: set[str] = set()
+        for canonical_key, candidate_keys in aliases.items():
+            for key in candidate_keys:
+                value = data.get(key)
+                if value is not None and value != "":
+                    normalized[canonical_key] = self._stringify_profile_value(value)
+                    consumed_keys.add(key)
+                    break
+                if key in data:
+                    consumed_keys.add(key)
+
+        for key, value in data.items():
+            if key not in consumed_keys and key not in normalized:
+                normalized[key] = self._stringify_profile_value(value)
+        return normalized or None
+
+    def _normalize_profile_data(self, data: Any) -> dict[str, Any]:
+        if isinstance(data, dict) and isinstance(data.get("character"), dict):
+            data = data["character"]
+        if not isinstance(data, dict):
+            return {}
+
+        normalized = dict(data)
+        aliases = normalized.get("aliases")
+        if isinstance(aliases, str):
+            normalized["aliases"] = [
+                item.strip()
+                for item in aliases.replace("，", ",").replace("、", ",").split(",")
+                if item.strip()
+            ]
+        normalized["basic_info"] = self._normalize_profile_section(
+            normalized.get("basic_info"), BASIC_INFO_KEY_ALIASES
+        )
+        normalized["personality"] = self._normalize_profile_section(
+            normalized.get("personality"), PERSONALITY_KEY_ALIASES
+        )
+        normalized["growth_arc"] = self._normalize_profile_section(
+            normalized.get("growth_arc"), GROWTH_ARC_KEY_ALIASES
+        )
+        return normalized
+
     @staticmethod
     def _extract_json(text: str):
         text = text.strip()
@@ -136,7 +215,7 @@ class CharacterService:
             temperature=temperature,
             **json_object_response_kwargs(),
         )
-        profile_data = self._extract_json(response)
+        profile_data = self._normalize_profile_data(self._extract_json(response))
         sort_order = await self._get_next_sort_order(db, project_id)
         character = Character(
             project_id=project_id,
@@ -203,6 +282,7 @@ class CharacterService:
         created = []
         next_sort_order = await self._get_next_sort_order(db, project_id)
         for index, pd_item in enumerate(profile_data):
+            pd_item = self._normalize_profile_data(pd_item)
             character = Character(
                 project_id=project_id,
                 name=pd_item.get("name", "未命名"),

@@ -1,12 +1,13 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-import sys
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
 from app.core.exceptions import AppException
@@ -26,48 +27,14 @@ from app.db.session import engine
 from app.models.base import Base
 
 
-def find_frontend_dist() -> Path | None:
-    candidates: list[Path] = []
-    bundled_root = getattr(sys, "_MEIPASS", None)
-    if bundled_root:
-        candidates.append(Path(bundled_root) / "frontend_dist")
-
-    repo_root = Path(__file__).resolve().parents[2]
-    candidates.extend(
-        [
-            repo_root / "frontend" / "dist",
-            Path.cwd() / "frontend_dist",
-        ]
-    )
-
-    for candidate in dict.fromkeys(candidates):
-        if (candidate / "index.html").is_file():
-            return candidate
-    return None
-
-
-def mount_frontend(app: FastAPI) -> None:
-    frontend_dist = find_frontend_dist()
-    if not frontend_dist:
-        return
-
-    assets_dir = frontend_dist / "assets"
-    if assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="frontend-assets")
-
-    @app.get("/", include_in_schema=False)
-    async def serve_frontend_index():
-        return FileResponse(frontend_dist / "index.html")
-
-    @app.get("/{path:path}", include_in_schema=False)
-    async def serve_frontend_path(path: str):
-        if path.startswith(("api/", "uploads/")):
-            raise HTTPException(status_code=404)
-
-        target = (frontend_dist / path).resolve()
-        if frontend_dist.resolve() in (target, *target.parents) and target.is_file():
-            return FileResponse(target)
-        return FileResponse(frontend_dist / "index.html")
+class SPAStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
 
 
 async def ensure_runtime_schema(conn):
@@ -118,7 +85,6 @@ app.include_router(
     prefix="/api/v1/system-settings",
     tags=["System Settings"],
 )
-mount_frontend(app)
 
 
 @app.exception_handler(AppException)
@@ -127,3 +93,14 @@ async def app_exception_handler(request: Request, exc: AppException):
         status_code=exc.status_code,
         content={"detail": exc.detail, "error_code": exc.error_code},
     )
+
+
+frontend_dist = os.environ.get("NARRATIVE_FORGE_FRONTEND_DIST")
+if frontend_dist:
+    frontend_dist_path = Path(frontend_dist)
+    if (frontend_dist_path / "index.html").exists():
+        app.mount(
+            "/",
+            SPAStaticFiles(directory=str(frontend_dist_path), html=True),
+            name="frontend",
+        )

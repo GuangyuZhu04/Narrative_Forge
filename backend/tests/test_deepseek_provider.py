@@ -75,6 +75,31 @@ def test_deepseek_json_mode_payload_does_not_add_thinking_fields():
     assert "reasoning_effort" not in payload
 
 
+def test_deepseek_payload_can_disable_forced_thinking_for_health_check():
+    provider = DeepSeekProvider(
+        _config(
+            {
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "max",
+            }
+        )
+    )
+
+    payload = provider._build_payload(
+        [{"role": "user", "content": "OK"}],
+        stream=False,
+        _force_max_thinking=False,
+        thinking=None,
+        reasoning_effort=None,
+        max_tokens=64,
+    )
+
+    assert payload["max_tokens"] == 64
+    assert "_force_max_thinking" not in payload
+    assert "thinking" not in payload
+    assert "reasoning_effort" not in payload
+
+
 def test_deepseek_stream_timeout_allows_long_thinking_gaps():
     provider = DeepSeekProvider(_config())
 

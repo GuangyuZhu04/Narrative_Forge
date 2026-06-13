@@ -268,3 +268,89 @@ async def test_outline_ai_json_mode_kwargs(client, monkeypatch):
         kwargs["response_format"] == DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT
         for kwargs in captured_kwargs
     )
+
+
+@pytest.mark.anyio
+async def test_outline_structure_appends_generated_volumes_and_chapters(
+    client, monkeypatch
+):
+    project_id, outline_id = await create_project_outline(client)
+    seed_response = await client.post(
+        f"/api/v1/projects/{project_id}/outlines/nodes",
+        json={
+            "outline_id": outline_id,
+            "node_type": "PLOT_POINT",
+            "title": "已有冲突",
+            "summary": "主角发现旧案线索。",
+        },
+    )
+    assert seed_response.status_code == 201
+
+    captured = {}
+
+    async def fake_chat(config_id, messages, **kwargs):
+        captured["config_id"] = config_id
+        captured["messages"] = messages
+        captured["kwargs"] = kwargs
+        return """
+        {
+          "children": [
+            {
+              "node_type": "VOLUME",
+              "title": "第一卷 旧案回声",
+              "summary": "主角追查旧案，发现更大的阴谋。",
+              "metadata": {"goal": "揭开旧案"},
+              "children": [
+                {
+                  "node_type": "CHAPTER",
+                  "title": "第一章 线索重现",
+                  "summary": "主角收到旧案相关线索。",
+                  "metadata": {}
+                },
+                {
+                  "node_type": "CHAPTER",
+                  "title": "第二章 暗处试探",
+                  "summary": "反派势力开始试探主角。",
+                  "metadata": {}
+                }
+              ]
+            }
+          ]
+        }
+        """
+
+    monkeypatch.setattr(outline_module.llm_orchestrator, "chat", fake_chat)
+
+    response = await client.post(
+        f"/api/v1/projects/{project_id}/outlines/{outline_id}/structure",
+        json={
+            "llm_config_id": "test-config",
+            "params": {
+                "volume_count": 1,
+                "chapters_per_volume": 2,
+                "requirements": "保留悬疑推进",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    assert captured["config_id"] == "test-config"
+    assert captured["kwargs"]["response_format"] == DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT
+    assert "已有冲突" in captured["messages"][1]["content"]
+    assert "保留悬疑推进" in captured["messages"][1]["content"]
+
+    data = response.json()["data"]
+    assert data[0]["title"] == "第一卷 旧案回声"
+    assert data[0]["node_type"] == "VOLUME"
+    assert data[0]["llm_generated"] is True
+
+    tree_response = await client.get(
+        f"/api/v1/projects/{project_id}/outlines/{outline_id}/tree"
+    )
+    tree = tree_response.json()["tree"]
+    generated_volume = tree[1]
+    assert generated_volume["title"] == "第一卷 旧案回声"
+    assert [child["title"] for child in generated_volume["children"]] == [
+        "第一章 线索重现",
+        "第二章 暗处试探",
+    ]

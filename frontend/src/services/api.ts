@@ -47,6 +47,11 @@ export const outlineApi = {
       llm_config_id: llmConfigId,
       direction,
     }),
+  structure: (projectId: string, llmConfigId: string, outlineId: string, params: Record<string, unknown>) =>
+    api.post(`/projects/${projectId}/outlines/${outlineId}/structure`, {
+      llm_config_id: llmConfigId,
+      params,
+    }),
   addNode: (projectId: string, data: Record<string, unknown>) =>
     api.post(`/projects/${projectId}/outlines/nodes`, data),
   updateNode: (projectId: string, nodeId: string, data: Record<string, unknown>) =>

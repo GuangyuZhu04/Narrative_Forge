@@ -45,7 +45,12 @@ import type {
 } from '@/types'
 
 type ToastType = 'success' | 'error'
-type ImportTarget = 'chapter_content' | 'characters' | 'outline_volume' | 'outline_chapter'
+type ImportTarget =
+  | 'chapter_content'
+  | 'characters'
+  | 'outline'
+  | 'outline_volume'
+  | 'outline_chapter'
 type ContextSource =
   | 'novel_content'
   | 'characters'
@@ -1025,6 +1030,12 @@ export const NovelDiscussion: React.FC = () => {
           importText
         )) as unknown as { count: number }
         showToast('success', `已导出 ${result.count || 0} 个人物`)
+      } else if (importTarget === 'outline') {
+        await outlineApi.create(projectId, {
+          title: importTitle.trim() || '来自小说讨论的大纲',
+          description: importText,
+        })
+        showToast('success', '已导出到大纲')
       } else if (importTarget === 'outline_volume') {
         if (!selectedOutlineId) {
           showToast('error', '请选择大纲')
@@ -1372,6 +1383,18 @@ export const NovelDiscussion: React.FC = () => {
             </button>
             <button
               type="button"
+              onClick={() => setImportTarget('outline')}
+              className={`rounded-md border p-3 text-left text-sm transition-colors ${
+                importTarget === 'outline'
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <FileText className="mb-2 h-4 w-4" />
+              导出到大纲
+            </button>
+            <button
+              type="button"
               onClick={() => setImportTarget('outline_volume')}
               className={`rounded-md border p-3 text-left text-sm transition-colors ${
                 importTarget === 'outline_volume'
@@ -1438,6 +1461,14 @@ export const NovelDiscussion: React.FC = () => {
                     </Button>
                   </div>
                 </div>
+              )}
+
+              {importTarget === 'outline' && (
+                <Input
+                  label="大纲标题"
+                  value={importTitle}
+                  onChange={(e) => setImportTitle(e.target.value)}
+                />
               )}
 
               {(importTarget === 'outline_volume' ||

@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import {
-  outlineApi,
   analysisApi,
   chapterApi,
   getActiveLLMConfigId,
 } from '@/services/api'
+import { useOutlineStore } from '@/stores/outlineStore'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import {
@@ -215,7 +215,14 @@ let toastId = 0
 
 export const NovelContent: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>()
-  const [outlineTree, setOutlineTree] = useState<OutlineNode[]>([])
+  const {
+    outlines,
+    currentOutline,
+    currentTree: outlineTree,
+    fetchOutlines,
+    fetchTree,
+  } = useOutlineStore()
+  const [loadedOutlineId, setLoadedOutlineId] = useState<string | null>(null)
   const [chapters, setChapters] = useState<ChapterItem[]>([])
   const [selectedChapter, setSelectedChapter] = useState<ChapterItem | null>(
     null
@@ -255,23 +262,9 @@ export const NovelContent: React.FC = () => {
 
     const loadInitialData = async () => {
       try {
-        const outlinesResult = (await outlineApi.list(
-          projectId
-        )) as unknown as {
-          data: { id: string }[]
-        }
-        const outlines = outlinesResult.data || []
-        if (outlines.length > 0) {
-          const treeResult = (await outlineApi.getTree(
-            projectId,
-            outlines[0].id
-          )) as unknown as { tree: OutlineNode[] }
-          if (!cancelled) {
-            setOutlineTree(treeResult.tree || [])
-          }
-        }
+        await fetchOutlines(projectId)
       } catch {
-        console.error('Failed to load outline tree')
+        console.error('Failed to load outlines')
       }
 
       try {
@@ -290,7 +283,54 @@ export const NovelContent: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [projectId])
+  }, [projectId, fetchOutlines])
+
+  useEffect(() => {
+    if (!projectId || outlines.length === 0) return
+    const currentOutlineAvailable =
+      !!currentOutline &&
+      currentOutline.project_id === projectId &&
+      outlines.some((outline) => outline.id === currentOutline.id)
+    if (currentOutlineAvailable) {
+      setLoadedOutlineId(currentOutline.id)
+      return
+    }
+
+    const firstOutlineId = outlines[0].id
+    if (loadedOutlineId === firstOutlineId) return
+    setLoadedOutlineId(firstOutlineId)
+    fetchTree(projectId, firstOutlineId).catch(() => {
+      console.error('Failed to load outline tree')
+      setLoadedOutlineId(null)
+    })
+  }, [
+    projectId,
+    outlines,
+    currentOutline,
+    loadedOutlineId,
+    fetchTree,
+  ])
+
+  const resetChapterSelection = useCallback(() => {
+    setSelectedChapter(null)
+    setEditContent('')
+    setWriteContext(null)
+    setPolishSuggestions('')
+    setShowPolishModal(false)
+  }, [])
+
+  const handleSelectOutline = async (outlineId: string) => {
+    if (!projectId || !outlineId) return
+    try {
+      setLoadedOutlineId(outlineId)
+      await fetchTree(projectId, outlineId)
+      setExpandedVolumes(new Set())
+      resetChapterSelection()
+    } catch {
+      setLoadedOutlineId(null)
+      showToast('error', '加载大纲失败')
+    }
+  }
 
   useEffect(() => {
     if (!projectId) return
@@ -829,6 +869,24 @@ export const NovelContent: React.FC = () => {
           <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-700">
             <BookOpen className="h-4 w-4" /> 章节导航
           </h3>
+          {outlines.length > 0 && (
+            <div className="mt-3">
+              <label className="block text-xs font-medium text-gray-500">
+                当前大纲
+              </label>
+              <select
+                className="mt-1 w-full rounded-md border px-2 py-1.5 text-sm text-gray-700"
+                value={currentOutline?.id || ''}
+                onChange={(e) => handleSelectOutline(e.target.value)}
+              >
+                {outlines.map((outline) => (
+                  <option key={outline.id} value={outline.id}>
+                    {outline.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <div className="flex-1 overflow-auto p-2">
           {outlineTree.length === 0 ? (
@@ -888,9 +946,16 @@ export const NovelContent: React.FC = () => {
           <>
             <div className="flex items-center justify-between border-b px-4 py-2">
               <div className="flex items-center gap-3">
-                <h3 className="font-semibold text-gray-800">
-                  {selectedChapter.title}
-                </h3>
+                <div className="min-w-0">
+                  {currentOutline && (
+                    <div className="truncate text-xs text-gray-400">
+                      大纲：{currentOutline.title}
+                    </div>
+                  )}
+                  <h3 className="truncate font-semibold text-gray-800">
+                    {selectedChapter.title}
+                  </h3>
+                </div>
                 <span className="text-sm text-gray-400">
                   {cnCharCount} 字
                 </span>

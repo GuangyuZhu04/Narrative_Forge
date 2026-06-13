@@ -46,7 +46,16 @@ export const useOutlineStore = create<OutlineState>((set) => ({
     const result = (await outlineApi.list(projectId)) as unknown as {
       data: Outline[]
     }
-    set({ outlines: result.data || [] })
+    const outlines = result.data || []
+    set((state) => {
+      const hasCurrentOutline =
+        !!state.currentOutline &&
+        outlines.some((outline) => outline.id === state.currentOutline?.id)
+      return {
+        outlines,
+        ...(hasCurrentOutline ? {} : { currentOutline: null, currentTree: [] }),
+      }
+    })
   },
 
   fetchTree: async (projectId, outlineId) => {
