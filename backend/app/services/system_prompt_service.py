@@ -18,6 +18,7 @@ from app.llm.prompts.novel_write import (
     NOVEL_WRITE_USER,
 )
 from app.llm.prompts.outline import OUTLINE_EXPAND_SYSTEM, OUTLINE_OPTIMIZE_SYSTEM
+from app.llm.prompts.scene import SCENE_IMPORT_SYSTEM
 from app.core.exceptions import ValidationException
 from app.models.system_prompt_setting import SystemPromptSetting
 from app.schemas.system_settings import SystemPromptSettingResponse
@@ -48,6 +49,8 @@ OUTLINE_GENERATE_TEMPERATURE_KEY = "outline_generate.temperature"
 CHARACTER_IMPORT_SYSTEM_KEY = "character_import.system"
 CHARACTER_IMPORT_TEMPERATURE_KEY = "character_import.temperature"
 CHARACTER_GENERATE_TEMPERATURE_KEY = "character_generate.temperature"
+SCENE_IMPORT_SYSTEM_KEY = "scene_import.system"
+SCENE_IMPORT_TEMPERATURE_KEY = "scene_import.temperature"
 CHAPTER_CONTINUE_TEMPERATURE_KEY = "chapter_continue.temperature"
 CHAPTER_REWRITE_TEMPERATURE_KEY = "chapter_rewrite.temperature"
 CHAPTER_POLISH_TEMPERATURE_KEY = "chapter_polish.temperature"
@@ -253,6 +256,20 @@ PROMPT_DEFINITIONS: tuple[PromptDefinition, ...] = (
         "人物",
         "人物生成 temperature",
         "控制根据描述生成人物档案时的发散度；DeepSeek 人物设定建议 1.0 ~ 1.2，默认 1.1。",
+        "1.1",
+    ),
+    PromptDefinition(
+        SCENE_IMPORT_SYSTEM_KEY,
+        "场景",
+        "场景 AI 导入 system prompt",
+        "控制场景页面 AI 导入时如何从自然语言描述中提取、拆分并生成结构化场景卡片。",
+        SCENE_IMPORT_SYSTEM,
+    ),
+    temperature_definition(
+        SCENE_IMPORT_TEMPERATURE_KEY,
+        "场景",
+        "场景 AI 导入 temperature",
+        "控制场景 AI 导入时的推断发散度；场景设定整理偏向稳定与可复用，默认 1.1。",
         "1.1",
     ),
     temperature_definition(

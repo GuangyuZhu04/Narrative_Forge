@@ -23,6 +23,9 @@ class Project(UUIDMixin, TimestampMixin, Base):
     characters = relationship(
         "Character", back_populates="project", cascade="all, delete-orphan"
     )
+    scenes = relationship(
+        "Scene", back_populates="project", cascade="all, delete-orphan"
+    )
     analysis_reports = relationship(
         "AnalysisReport", back_populates="project", cascade="all, delete-orphan"
     )

@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
+LLMStreamEvent = dict[str, str]
+
 
 class LLMOutputTruncatedError(RuntimeError):
     """Raised when a provider stops because the output token limit was reached."""
@@ -21,6 +23,15 @@ class LLMProvider(ABC):
     async def stream_completion(
         self, messages: list[dict], **kwargs
     ) -> AsyncIterator[str]: ...
+
+    async def stream_completion_events(
+        self, messages: list[dict], **kwargs
+    ) -> AsyncIterator[LLMStreamEvent]:
+        async for chunk in self.stream_completion(messages, **kwargs):
+            yield {
+                "type": "content" if chunk else "ping",
+                "content": chunk,
+            }
 
     @abstractmethod
     def validate_config(self) -> bool: ...

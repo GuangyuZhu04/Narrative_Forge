@@ -54,6 +54,27 @@ def test_deepseek_stream_payload_forces_max_thinking_mode():
     assert payload["stream"] is True
 
 
+def test_deepseek_json_mode_payload_does_not_add_thinking_fields():
+    provider = DeepSeekProvider(
+        _config(
+            {
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "max",
+            }
+        )
+    )
+
+    payload = provider._build_payload(
+        [{"role": "user", "content": "请返回 JSON"}],
+        stream=False,
+        response_format={"type": "json_object"},
+    )
+
+    assert payload["response_format"] == {"type": "json_object"}
+    assert "thinking" not in payload
+    assert "reasoning_effort" not in payload
+
+
 def test_deepseek_stream_timeout_allows_long_thinking_gaps():
     provider = DeepSeekProvider(_config())
 
@@ -61,6 +82,22 @@ def test_deepseek_stream_timeout_allows_long_thinking_gaps():
 
     assert timeout["connect"] == 30.0
     assert timeout["read"] is None
+
+
+def test_deepseek_delta_reasoning_content_becomes_thinking_event():
+    provider = DeepSeekProvider(_config())
+
+    event = provider._event_from_delta({"reasoning_content": "先分析人物动机"})
+
+    assert event == {"type": "thinking", "content": "先分析人物动机"}
+
+
+def test_deepseek_delta_content_becomes_content_event():
+    provider = DeepSeekProvider(_config())
+
+    event = provider._event_from_delta({"content": "正式回复"})
+
+    assert event == {"type": "content", "content": "正式回复"}
 
 
 def test_deepseek_finish_reason_length_is_treated_as_truncation():

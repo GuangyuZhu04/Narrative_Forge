@@ -9,8 +9,10 @@ from sqlalchemy.pool import StaticPool
 os.environ["DEBUG"] = "false"
 
 from app.db.session import get_db  # noqa: E402
+from app.llm.json_mode import DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.base import Base  # noqa: E402
+import app.services.outline_service as outline_module  # noqa: E402
 
 
 @pytest_asyncio.fixture
@@ -182,3 +184,87 @@ async def test_move_outline_node_reorders_siblings(client):
         "Chapter B",
     ]
     assert [node["sort_order"] for node in children] == [0, 1, 2]
+
+
+@pytest.mark.anyio
+async def test_outline_ai_json_mode_kwargs(client, monkeypatch):
+    project_response = await client.post(
+        "/api/v1/projects",
+        json={"name": "outline json mode"},
+    )
+    assert project_response.status_code == 201
+    project_id = project_response.json()["id"]
+
+    captured_kwargs = []
+
+    async def fake_chat(config_id, messages, **kwargs):
+        captured_kwargs.append(kwargs)
+        if len(captured_kwargs) == 1:
+            return """
+            {
+              "title": "AI 大纲",
+              "description": "AI 大纲说明",
+              "children": [
+                {
+                  "node_type": "VOLUME",
+                  "title": "第一卷",
+                  "summary": "第一卷概要",
+                  "metadata": {},
+                  "children": []
+                }
+              ]
+            }
+            """
+        if len(captured_kwargs) == 2:
+            return """
+            {
+              "children": [
+                {
+                  "node_type": "CHAPTER",
+                  "title": "第一章",
+                  "summary": "第一章概要",
+                  "metadata": {}
+                }
+              ]
+            }
+            """
+        return """
+        {
+          "issues": [],
+          "suggestions": [],
+          "optimized_structure": {}
+        }
+        """
+
+    monkeypatch.setattr(outline_module.llm_orchestrator, "chat", fake_chat)
+
+    generate_response = await client.post(
+        f"/api/v1/projects/{project_id}/outlines/generate",
+        json={"llm_config_id": "test-config", "params": {}},
+    )
+    assert generate_response.status_code == 201
+    outline_id = generate_response.json()["id"]
+
+    tree_response = await client.get(
+        f"/api/v1/projects/{project_id}/outlines/{outline_id}/tree"
+    )
+    assert tree_response.status_code == 200
+    volume_id = tree_response.json()["tree"][0]["id"]
+
+    expand_response = await client.post(
+        f"/api/v1/projects/{project_id}/outlines/nodes/{volume_id}/expand",
+        json={"llm_config_id": "test-config", "params": {"count": 1}},
+    )
+    assert expand_response.status_code == 201
+
+    optimize_response = await client.post(
+        f"/api/v1/projects/{project_id}/outlines/{outline_id}/optimize",
+        json={"llm_config_id": "test-config", "direction": "检查节奏"},
+    )
+    assert optimize_response.status_code == 200
+
+    assert len(captured_kwargs) == 3
+    assert all(
+        kwargs["response_format"] == DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT
+        for kwargs in captured_kwargs
+    )

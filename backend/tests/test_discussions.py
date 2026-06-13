@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -156,14 +157,15 @@ async def test_discussion_streams_response_and_saves_messages(client, monkeypatc
 
     calls = []
 
-    async def fake_stream_chat(config_id, messages, **kwargs):
+    async def fake_stream_chat_events(config_id, messages, **kwargs):
         calls.append({"config_id": config_id, "messages": messages, "kwargs": kwargs})
-        yield "第一段"
-        yield ""
-        yield "第二段"
+        yield {"type": "content", "content": "第一段"}
+        yield {"type": "ping", "content": ""}
+        yield {"type": "content", "content": "第二段"}
 
     monkeypatch.setattr(
-        "app.api.v1.discussions.llm_orchestrator.stream_chat", fake_stream_chat
+        "app.api.v1.discussions.llm_orchestrator.stream_chat_events",
+        fake_stream_chat_events,
     )
 
     response = await client.post(
@@ -192,3 +194,48 @@ async def test_discussion_streams_response_and_saves_messages(client, monkeypatc
     messages = detail_response.json()["messages"]
     assert [item["role"] for item in messages] == ["user", "assistant"]
     assert messages[1]["content"] == "第一段第二段"
+
+
+@pytest.mark.anyio
+async def test_discussion_stream_done_event_omits_long_message_content(
+    client, monkeypatch
+):
+    project_id = await _create_project(client)
+    create_response = await client.post(
+        f"/api/v1/projects/{project_id}/discussions",
+        json={"title": "长回复流式讨论"},
+    )
+    assert create_response.status_code == 201
+    session_id = create_response.json()["id"]
+
+    long_chunk = "长回复" * 2000
+
+    async def fake_stream_chat_events(config_id, messages, **kwargs):
+        yield {"type": "content", "content": long_chunk}
+
+    monkeypatch.setattr(
+        "app.api.v1.discussions.llm_orchestrator.stream_chat_events",
+        fake_stream_chat_events,
+    )
+
+    response = await client.post(
+        f"/api/v1/projects/{project_id}/discussions/{session_id}/messages/stream",
+        json={"llm_config_id": "test-config", "content": "写一段很长的讨论"},
+    )
+
+    assert response.status_code == 200
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    done_event = next(event for event in events if event.get("type") == "done")
+    assert "content" not in done_event["assistant_message"]
+    assert "content" not in done_event["user_message"]
+
+    detail_response = await client.get(
+        f"/api/v1/projects/{project_id}/discussions/{session_id}"
+    )
+    assert detail_response.status_code == 200
+    messages = detail_response.json()["messages"]
+    assert messages[1]["content"] == long_chunk

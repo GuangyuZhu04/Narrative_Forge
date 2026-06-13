@@ -12,11 +12,13 @@ import {
   Settings,
   PenLine,
   MessageSquare,
+  MapPinned,
 } from 'lucide-react'
 
 const workspaceNavItems = [
   { path: 'outline', label: '大纲', icon: FileText },
   { path: 'characters', label: '人物', icon: Users },
+  { path: 'scenes', label: '场景', icon: MapPinned },
   { path: 'novel', label: '小说内容', icon: PenLine },
   { path: 'discussion', label: '小说讨论', icon: MessageSquare },
   { path: 'consistency', label: '一致性', icon: Shield },

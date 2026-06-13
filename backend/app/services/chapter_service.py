@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.chapter import Chapter, ChapterVersion
 from app.models.character import Character
 from app.models.outline import Outline, OutlineNode
+from app.models.scene import Scene
 from app.schemas.chapter import (
     ChapterCreate,
     ChapterUpdate,
@@ -474,6 +475,36 @@ class ChapterService:
             "\n\n".join(char_defs) if char_defs else "暂无人物定义"
         )
 
+        scene_result = await db.execute(
+            select(Scene)
+            .where(Scene.project_id == project_id)
+            .order_by(Scene.sort_order, Scene.created_at, Scene.id)
+        )
+        scenes = list(scene_result.scalars().all())
+        scene_items = []
+        for scene in scenes:
+            parts = [f"场景：{scene.name}"]
+            if scene.location:
+                parts.append(f"地点：{scene.location}")
+            if scene.time:
+                parts.append(f"时间：{scene.time}")
+            if scene.atmosphere:
+                parts.append(f"氛围：{scene.atmosphere}")
+            if scene.description:
+                parts.append(f"描述：{scene.description}")
+            if scene.details:
+                parts.append(f"细节：{scene.details}")
+            if scene.notes:
+                parts.append(f"备注：{scene.notes}")
+            scene_items.append(
+                {
+                    "id": scene.id,
+                    "name": scene.name,
+                    "definition": "\n".join(parts),
+                    "selected": False,
+                }
+            )
+
         previous_sources = await self._get_previous_chapter_sources(
             db, project_id, chapter, current_outline_node, volume_node
         )
@@ -507,6 +538,9 @@ class ChapterService:
             "character_definitions": character_definitions,
             "characters": character_items,
             "character_count": len(characters),
+            "scene_context": "暂无场景信息",
+            "scenes": scene_items,
+            "scene_count": len(scenes),
             "previous_chapter_title": previous_chapter_title,
             "previous_context": previous_context or "无前文背景",
             "previous_chapter_content": previous_chapter_content or "无前一章内容",
@@ -727,6 +761,7 @@ class ChapterService:
             "chapter_title",
             "chapter_summary",
             "character_definitions",
+            "scene_context",
             "previous_context",
             "previous_chapter_content",
             "style_requirements",
@@ -745,6 +780,8 @@ class ChapterService:
             write_context["chapter_summary"] = "无章节摘要"
         if not write_context.get("character_definitions"):
             write_context["character_definitions"] = "暂无人物定义"
+        if not write_context.get("scene_context"):
+            write_context["scene_context"] = "暂无场景信息"
         if not write_context.get("previous_context"):
             write_context["previous_context"] = "无前文背景"
         if not write_context.get("previous_chapter_content"):
@@ -778,6 +815,7 @@ class ChapterService:
                     chapter_title=write_context["chapter_title"],
                     chapter_summary=write_context["chapter_summary"],
                     character_definitions=write_context["character_definitions"],
+                    scene_context=write_context["scene_context"],
                     previous_context=write_context["previous_context"],
                     previous_chapter_content=write_context[
                         "previous_chapter_content"

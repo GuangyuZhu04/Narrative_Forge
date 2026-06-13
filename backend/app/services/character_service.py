@@ -3,6 +3,7 @@ import json
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.llm.json_mode import json_object_response_kwargs
 from app.models.character import Character, CharacterRelationship
 from app.schemas.character import (
     CharacterCreate,
@@ -130,7 +131,10 @@ class CharacterService:
             db, CHARACTER_GENERATE_TEMPERATURE_KEY
         )
         response = await llm_orchestrator.chat(
-            llm_config_id, messages, temperature=temperature
+            llm_config_id,
+            messages,
+            temperature=temperature,
+            **json_object_response_kwargs(),
         )
         profile_data = self._extract_json(response)
         sort_order = await self._get_next_sort_order(db, project_id)
@@ -177,9 +181,22 @@ class CharacterService:
                 db, CHARACTER_IMPORT_TEMPERATURE_KEY
             ),
             max_tokens=CHARACTER_IMPORT_MAX_TOKENS,
+            **json_object_response_kwargs(),
         )
         profile_data = self._extract_json(response)
 
+        if isinstance(profile_data, dict) and isinstance(
+            profile_data.get("characters"), list
+        ):
+            profile_data = profile_data["characters"]
+        elif isinstance(profile_data, dict) and isinstance(
+            profile_data.get("data"), list
+        ):
+            profile_data = profile_data["data"]
+        elif isinstance(profile_data, dict) and isinstance(
+            profile_data.get("character"), dict
+        ):
+            profile_data = [profile_data["character"]]
         if isinstance(profile_data, dict):
             profile_data = [profile_data]
 

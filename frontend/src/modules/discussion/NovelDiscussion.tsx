@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useParams } from 'react-router-dom'
 import {
   characterApi,
@@ -79,6 +86,7 @@ const countChineseChars = (text: string) =>
   (text.match(/[\u4e00-\u9fff]/g) || []).length
 
 const COLLAPSED_MESSAGE_MAX_HEIGHT_PX = 456
+const COLLAPSED_THINKING_MAX_HEIGHT_PX = 200
 
 const flattenVolumes = (nodes: OutlineNode[]): OutlineNode[] => {
   const volumes: OutlineNode[] = []
@@ -167,7 +175,11 @@ const DiscussionMessageBubble: React.FC<DiscussionMessageBubbleProps> = ({
   const canCollapse = isUser
   const [expanded, setExpanded] = useState(false)
   const [isOverflowing, setIsOverflowing] = useState(false)
+  const [thinkingExpanded, setThinkingExpanded] = useState(false)
+  const [thinkingOverflowing, setThinkingOverflowing] = useState(false)
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const thinkingRef = useRef<HTMLDivElement | null>(null)
+  const thinkingContent = !isUser ? message.thinking_content?.trim() || '' : ''
 
   useEffect(() => {
     if (!canCollapse) {
@@ -193,6 +205,30 @@ const DiscussionMessageBubble: React.FC<DiscussionMessageBubbleProps> = ({
     return () => resizeObserver.disconnect()
   }, [canCollapse, message.content])
 
+  useEffect(() => {
+    if (!thinkingContent) {
+      setThinkingExpanded(false)
+      setThinkingOverflowing(false)
+      return
+    }
+
+    const element = thinkingRef.current
+    if (!element) return
+
+    const updateOverflow = () => {
+      const nextIsOverflowing =
+        element.scrollHeight > COLLAPSED_THINKING_MAX_HEIGHT_PX + 1
+      setThinkingOverflowing(nextIsOverflowing)
+      if (!nextIsOverflowing) setThinkingExpanded(false)
+    }
+
+    updateOverflow()
+    const resizeObserver = new ResizeObserver(updateOverflow)
+    resizeObserver.observe(element)
+
+    return () => resizeObserver.disconnect()
+  }, [thinkingContent])
+
   const actionButtonClass = isUser
     ? 'text-white hover:bg-blue-500'
     : 'text-gray-500 hover:bg-gray-100'
@@ -215,6 +251,44 @@ const DiscussionMessageBubble: React.FC<DiscussionMessageBubbleProps> = ({
             {getMessageRoleLabel(message.role)}
           </span>
         </div>
+
+        {thinkingContent && (
+          <div className="mb-3 rounded-md border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="font-medium text-amber-700">思考过程</span>
+              {thinkingOverflowing && (
+                <button
+                  type="button"
+                  className="rounded px-1.5 py-0.5 text-amber-700 hover:bg-amber-100"
+                  onClick={() => setThinkingExpanded((prev) => !prev)}
+                >
+                  {thinkingExpanded ? '收起' : '展开'}
+                </button>
+              )}
+            </div>
+            <div className="relative">
+              <div
+                ref={thinkingRef}
+                className={`whitespace-pre-wrap leading-relaxed transition-[max-height] duration-200 ${
+                  thinkingOverflowing && !thinkingExpanded
+                    ? 'overflow-hidden'
+                    : ''
+                }`}
+                style={{
+                  maxHeight:
+                    thinkingOverflowing && !thinkingExpanded
+                      ? COLLAPSED_THINKING_MAX_HEIGHT_PX
+                      : undefined,
+                }}
+              >
+                {thinkingContent}
+              </div>
+              {thinkingOverflowing && !thinkingExpanded && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-amber-50 to-transparent" />
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="relative">
           <div
@@ -316,6 +390,8 @@ export const NovelDiscussion: React.FC = () => {
   const [loadingContextSources, setLoadingContextSources] = useState(false)
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const activeSessionIdRef = useRef<string | null>(null)
+  const scrollPositionsRef = useRef<Record<string, number>>({})
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastId
@@ -335,6 +411,17 @@ export const NovelDiscussion: React.FC = () => {
   )
   const latestMessageContent =
     activeSession?.messages[activeSession.messages.length - 1]?.content || ''
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSession?.id || null
+  }, [activeSession?.id])
+
+  const saveCurrentScrollPosition = useCallback(() => {
+    const sessionId = activeSessionIdRef.current
+    const element = scrollRef.current
+    if (!sessionId || !element) return
+    scrollPositionsRef.current[sessionId] = element.scrollTop
+  }, [])
 
   const loadSessions = useCallback(async () => {
     if (!projectId) return
@@ -357,6 +444,9 @@ export const NovelDiscussion: React.FC = () => {
   const loadSessionDetail = useCallback(
     async (sessionId: string) => {
       if (!projectId) return
+      if (activeSessionIdRef.current !== sessionId) {
+        saveCurrentScrollPosition()
+      }
       setLoadingDetail(true)
       try {
         const detail = (await discussionApi.get(
@@ -371,16 +461,35 @@ export const NovelDiscussion: React.FC = () => {
         setLoadingDetail(false)
       }
     },
-    [projectId, showToast]
+    [projectId, saveCurrentScrollPosition, showToast]
   )
 
   useEffect(() => {
     void loadSessions()
   }, [loadSessions])
 
+  useLayoutEffect(() => {
+    const sessionId = activeSession?.id
+    const element = scrollRef.current
+    if (!sessionId || !element || sending) return
+
+    const savedTop = scrollPositionsRef.current[sessionId]
+    requestAnimationFrame(() => {
+      const currentElement = scrollRef.current
+      if (!currentElement) return
+      currentElement.scrollTop =
+        typeof savedTop === 'number'
+          ? Math.min(savedTop, currentElement.scrollHeight)
+          : currentElement.scrollHeight
+    })
+  }, [activeSession?.id, loadingDetail, sending])
+
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
+    if (!sending) return
+    const element = scrollRef.current
+    if (!element) return
+    element.scrollTo({
+      top: element.scrollHeight,
       behavior: 'smooth',
     })
   }, [activeSession?.messages.length, latestMessageContent, sending])
@@ -468,6 +577,7 @@ export const NovelDiscussion: React.FC = () => {
       await discussionApi.delete(projectId, session.id)
       setSessions((prev) => prev.filter((item) => item.id !== session.id))
       if (activeSession?.id === session.id) {
+        saveCurrentScrollPosition()
         setActiveSession(null)
       }
       if (renameSession?.id === session.id) {
@@ -550,6 +660,8 @@ export const NovelDiscussion: React.FC = () => {
       const decoder = new TextDecoder()
       let buffer = ''
       let streamDone = false
+      let assistantContent = ''
+      let thinkingContent = ''
 
       const handleSseLine = (rawLine: string) => {
         const line = rawLine.trimEnd()
@@ -569,6 +681,7 @@ export const NovelDiscussion: React.FC = () => {
           throw new Error(parsed.error || 'AI 回复失败')
         }
         if (parsed.type === 'chunk' && parsed.content) {
+          assistantContent += parsed.content
           setActiveSession((prev) =>
             prev?.id === session.id
               ? {
@@ -585,6 +698,25 @@ export const NovelDiscussion: React.FC = () => {
               : prev
           )
         }
+        if (parsed.type === 'thinking' && parsed.content) {
+          thinkingContent += parsed.content
+          setActiveSession((prev) =>
+            prev?.id === session.id
+              ? {
+                  ...prev,
+                  messages: prev.messages.map((message) =>
+                    message.id === optimisticAssistant.id
+                      ? {
+                          ...message,
+                          thinking_content:
+                            (message.thinking_content || '') + parsed.content,
+                        }
+                      : message
+                  ),
+                }
+              : prev
+          )
+        }
         if (
           parsed.type === 'done' &&
           parsed.session &&
@@ -593,8 +725,17 @@ export const NovelDiscussion: React.FC = () => {
         ) {
           streamDone = true
           const finalSession = parsed.session
-          const finalUserMessage = parsed.user_message
-          const finalAssistantMessage = parsed.assistant_message
+          const finalUserMessage = {
+            ...optimisticUser,
+            ...parsed.user_message,
+            content: parsed.user_message.content ?? optimisticUser.content,
+          }
+          const finalAssistantMessage = {
+            ...optimisticAssistant,
+            ...parsed.assistant_message,
+            content: parsed.assistant_message.content ?? assistantContent,
+            thinking_content: thinkingContent,
+          }
           setActiveSession((prev) =>
             prev?.id === session.id
               ? {
@@ -1059,7 +1200,11 @@ export const NovelDiscussion: React.FC = () => {
               </div>
             </div>
 
-            <div ref={scrollRef} className="flex-1 overflow-auto p-6">
+            <div
+              ref={scrollRef}
+              className="flex-1 overflow-auto p-6"
+              onScroll={saveCurrentScrollPosition}
+            >
               {loadingDetail ? (
                 <div className="flex h-full items-center justify-center text-gray-400">
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

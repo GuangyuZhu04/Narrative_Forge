@@ -21,6 +21,7 @@
 | 项目 | `/api/v1/projects` | 顶层资源，独立存在 |
 | 大纲 | `/api/v1/projects/{project_id}/outlines` | 嵌套在项目下 |
 | 人物 | `/api/v1/projects/{project_id}/characters` | 嵌套在项目下 |
+| 场景 | `/api/v1/projects/{project_id}/scenes` | 嵌套在项目下 |
 | 章节 | `/api/v1/projects/{project_id}/chapters` | 嵌套在项目下 |
 | 一致性分析 | `/api/v1/projects/{project_id}/analysis` | 嵌套在项目下 |
 | 导出 | `/api/v1/projects/{project_id}/export` | 嵌套在项目下 |

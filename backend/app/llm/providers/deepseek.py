@@ -3,7 +3,12 @@ from typing import AsyncIterator
 
 import httpx
 
-from .base import LLMContentFilteredError, LLMOutputTruncatedError, LLMProvider
+from .base import (
+    LLMContentFilteredError,
+    LLMOutputTruncatedError,
+    LLMProvider,
+    LLMStreamEvent,
+)
 from app.core.security import decrypt_api_key
 
 
@@ -46,6 +51,12 @@ class DeepSeekProvider(LLMProvider):
     async def stream_completion(
         self, messages: list[dict], **kwargs
     ) -> AsyncIterator[str]:
+        async for event in self.stream_completion_events(messages, **kwargs):
+            yield event["content"] if event["type"] == "content" else ""
+
+    async def stream_completion_events(
+        self, messages: list[dict], **kwargs
+    ) -> AsyncIterator[LLMStreamEvent]:
         payload = self._build_payload(messages, stream=True, **kwargs)
         async with httpx.AsyncClient(timeout=self.STREAM_TIMEOUT) as client:
             async with client.stream(
@@ -69,10 +80,9 @@ class DeepSeekProvider(LLMProvider):
                         if finish_reason := choice.get("finish_reason"):
                             last_finish_reason = finish_reason
                         delta = choice.get("delta", {})
-                        if content := delta.get("content"):
-                            yield content
-                        elif delta.get("reasoning_content"):
-                            yield ""
+                        event = self._event_from_delta(delta)
+                        if event:
+                            yield event
                 self._raise_for_finish_reason(last_finish_reason)
 
     def _build_payload(
@@ -85,10 +95,24 @@ class DeepSeekProvider(LLMProvider):
             "stream": stream,
             **{k: v for k, v in params.items() if v is not None},
         }
-        if self.FORCE_MAX_THINKING:
+        uses_json_mode = (
+            isinstance(payload.get("response_format"), dict)
+            and payload["response_format"].get("type") == "json_object"
+        )
+        if uses_json_mode:
+            payload.pop("thinking", None)
+            payload.pop("reasoning_effort", None)
+        elif self.FORCE_MAX_THINKING:
             payload["thinking"] = {"type": "enabled"}
             payload["reasoning_effort"] = "max"
         return payload
+
+    def _event_from_delta(self, delta: dict) -> LLMStreamEvent | None:
+        if content := delta.get("content"):
+            return {"type": "content", "content": content}
+        if reasoning_content := delta.get("reasoning_content"):
+            return {"type": "thinking", "content": reasoning_content}
+        return None
 
     def _raise_for_finish_reason(self, finish_reason: str | None) -> None:
         if finish_reason in self.TRUNCATED_FINISH_REASONS:

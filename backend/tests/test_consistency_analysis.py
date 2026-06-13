@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 os.environ["DEBUG"] = "false"
 
 from app.db.session import get_db  # noqa: E402
+from app.llm.json_mode import DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.base import Base  # noqa: E402
 import app.services.consistency_service as consistency_module  # noqa: E402
@@ -233,9 +234,11 @@ async def _create_project_with_neighbor_chapters(
 async def test_consistency_analysis_uses_outline_chapter_info(client, monkeypatch):
     project_id, chapter_id = await _create_project_with_outline_chapter(client)
     captured_messages = []
+    captured_kwargs = []
 
     async def fake_chat(config_id, messages, **kwargs):
         captured_messages.append(messages)
+        captured_kwargs.append(kwargs)
         return json.dumps({"issues": [], "suggestions": ["保持本章演绎方向。"], "score": 91})
 
     monkeypatch.setattr(consistency_module.llm_orchestrator, "chat", fake_chat)
@@ -251,6 +254,9 @@ async def test_consistency_analysis_uses_outline_chapter_info(client, monkeypatc
 
     assert analyze_response.status_code == 200
     assert captured_messages
+    assert (
+        captured_kwargs[0]["response_format"] == DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT
+    )
     user_prompt = captured_messages[0][1]["content"]
     assert "大纲章节标题" in user_prompt
     assert "大纲章节摘要" in user_prompt
@@ -273,9 +279,11 @@ async def test_plot_continuity_includes_previous_and_next_chapter_content(
 ):
     project_id, chapter_id = await _create_project_with_neighbor_chapters(client)
     captured_messages = []
+    captured_kwargs = []
 
     async def fake_chat(config_id, messages, **kwargs):
         captured_messages.append(messages)
+        captured_kwargs.append(kwargs)
         return json.dumps({"issues": [], "suggestions": [], "score": 90})
 
     monkeypatch.setattr(consistency_module.llm_orchestrator, "chat", fake_chat)
@@ -291,6 +299,9 @@ async def test_plot_continuity_includes_previous_and_next_chapter_content(
 
     assert analyze_response.status_code == 200
     assert captured_messages
+    assert (
+        captured_kwargs[0]["response_format"] == DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT
+    )
     user_prompt = captured_messages[0][1]["content"]
     assert "上一章正文：主角在雨夜收到密信。" in user_prompt
     assert "当前章正文：主角决定启程寻找真相。" in user_prompt

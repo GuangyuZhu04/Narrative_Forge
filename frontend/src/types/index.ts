@@ -63,6 +63,21 @@ export interface CharacterRelationship {
   target_name: string | null
 }
 
+export interface Scene {
+  id: string
+  project_id: string
+  name: string
+  location: string | null
+  time: string | null
+  atmosphere: string | null
+  description: string | null
+  details: string | null
+  notes: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
 export interface Chapter {
   id: string
   project_id: string
@@ -82,6 +97,7 @@ export interface DiscussionMessage {
   session_id: string
   role: 'user' | 'assistant'
   content: string
+  thinking_content?: string
   sort_order: number
   created_at: string
   updated_at: string

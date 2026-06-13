@@ -57,6 +57,7 @@ class NovelWriteContextOverride(BaseModel):
     chapter_title: str | None = None
     chapter_summary: str | None = None
     character_definitions: str | None = None
+    scene_context: str | None = None
     previous_context: str | None = None
     previous_chapter_content: str | None = None
     style_requirements: str | None = None

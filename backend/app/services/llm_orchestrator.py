@@ -1,7 +1,7 @@
 from typing import AsyncIterator
 
 from app.llm.providers.anthropic import AnthropicProvider
-from app.llm.providers.base import LLMProvider
+from app.llm.providers.base import LLMProvider, LLMStreamEvent
 from app.llm.providers.deepseek import DeepSeekProvider
 from app.llm.providers.google import GoogleProvider
 from app.llm.providers.openai import OpenAIProvider
@@ -49,6 +49,16 @@ class LLMOrchestrator:
         await self._rate_limiter.acquire()
         async for chunk in provider.stream_completion(messages, **kwargs):
             yield chunk
+
+    async def stream_chat_events(
+        self, config_id: str, messages: list[dict], **kwargs
+    ) -> AsyncIterator[LLMStreamEvent]:
+        provider = self._providers.get(config_id)
+        if not provider:
+            provider = await self._load_provider(config_id)
+        await self._rate_limiter.acquire()
+        async for event in provider.stream_completion_events(messages, **kwargs):
+            yield event
 
     async def _load_provider(self, config_id: str) -> LLMProvider:
         from app.db.session import AsyncSessionLocal

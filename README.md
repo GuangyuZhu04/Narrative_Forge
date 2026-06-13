@@ -215,7 +215,13 @@ npx tsc --noEmit
 2. 点击「添加人物」手动创建
 3. 切换到「关系图谱」查看人物关系网络
 
-### 第五步：章节创作
+### 第五步：整理场景
+
+1. 点击左侧导航「场景」
+2. 添加小说中经常出现的地点、氛围、关键细节和备注
+3. 在「小说内容」的 AI 输入面板中按需勾选场景，只有选中的场景会加入本章 AI 编写输入
+
+### 第六步：章节创作
 
 1. 创建章节后进入编辑器
 2. 使用 TipTap 富文本编辑器撰写内容
@@ -228,13 +234,13 @@ npx tsc --noEmit
    - **对话**：AI 根据人物信息生成对话
 4. 编辑器支持自动保存（3秒防抖）
 
-### 第六步：一致性检查
+### 第七步：一致性检查
 
 1. 点击左侧导航「一致性」
 2. 查看历史分析报告
 3. 报告包含问题列表和修改建议
 
-### 第七步：导出
+### 第八步：导出
 
 1. 点击左侧导航「导出」
 2. 选择导出格式（Markdown / TXT / DOCX）
@@ -245,7 +251,7 @@ npx tsc --noEmit
 
 ## 8. API 接口速查
 
-> 所有业务资源（大纲、人物、章节、分析、导出）的 API 都嵌套在项目路径 `/api/v1/projects/{project_id}/...` 下。LLM 配置是全局资源，路径独立。详细 schema 启动后端后访问 `/docs`。
+> 所有业务资源（大纲、人物、场景、章节、分析、导出）的 API 都嵌套在项目路径 `/api/v1/projects/{project_id}/...` 下。LLM 配置是全局资源，路径独立。详细 schema 启动后端后访问 `/docs`。
 
 | 模块 | 方法 | 路径 | 说明 |
 |------|------|------|------|
@@ -268,6 +274,11 @@ npx tsc --noEmit
 | 人物 | POST | `/api/v1/projects/{pid}/characters/import` | AI 一键导入多人物（从文本） |
 | 人物 | GET | `/api/v1/projects/{pid}/characters/relationships` | 获取关系列表 |
 | 人物 | POST | `/api/v1/projects/{pid}/characters/relationships` | 创建关系 |
+| 场景 | GET | `/api/v1/projects/{pid}/scenes` | 获取场景列表 |
+| 场景 | POST | `/api/v1/projects/{pid}/scenes` | 创建场景 |
+| 场景 | POST | `/api/v1/projects/{pid}/scenes/import` | AI 导入一个或多个场景 |
+| 场景 | PUT | `/api/v1/projects/{pid}/scenes/{id}` | 更新场景 |
+| 场景 | DELETE | `/api/v1/projects/{pid}/scenes/{id}` | 删除场景 |
 | 章节 | GET | `/api/v1/projects/{pid}/chapters` | 获取章节列表 |
 | 章节 | POST | `/api/v1/projects/{pid}/chapters` | 创建章节 |
 | 章节 | POST | `/api/v1/projects/{pid}/chapters/{id}/ai-assist` | AI 辅助（续写/改写/润色等） |

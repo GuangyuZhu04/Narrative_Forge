@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 os.environ["DEBUG"] = "false"
 
 from app.db.session import get_db  # noqa: E402
+from app.llm.json_mode import DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT  # noqa: E402
 from app.llm.providers.base import LLMOutputTruncatedError  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.base import Base  # noqa: E402
@@ -170,15 +171,20 @@ async def test_character_import_uses_system_prompt_setting(client, monkeypatch):
         captured["messages"] = messages
         captured["temperature"] = kwargs.get("temperature")
         captured["max_tokens"] = kwargs.get("max_tokens")
+        captured["response_format"] = kwargs.get("response_format")
         return """
         {
-          "name": "Imported Hero",
-          "aliases": ["Hero"],
-          "basic_info": {"age": "20"},
-          "personality": {"traits": ["brave"]},
-          "growth_arc": {"starting_state": "unknown"},
-          "biography": "Imported biography",
-          "notes": "Imported notes"
+          "characters": [
+            {
+              "name": "Imported Hero",
+              "aliases": ["Hero"],
+              "basic_info": {"age": "20"},
+              "personality": {"traits": ["brave"]},
+              "growth_arc": {"starting_state": "unknown"},
+              "biography": "Imported biography",
+              "notes": "Imported notes"
+            }
+          ]
         }
         """
 
@@ -201,6 +207,7 @@ async def test_character_import_uses_system_prompt_setting(client, monkeypatch):
     assert captured["config_id"] == "test-config"
     assert captured["temperature"] == 1.1
     assert captured["max_tokens"] == CHARACTER_IMPORT_MAX_TOKENS
+    assert captured["response_format"] == DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT
     assert captured["messages"][0]["content"] == custom_prompt
 
 

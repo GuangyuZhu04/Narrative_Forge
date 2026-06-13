@@ -54,6 +54,9 @@ interface NovelWriteContext {
   character_definitions: string
   characters?: NovelWriteCharacter[]
   character_count: number
+  scene_context: string
+  scenes?: NovelWriteScene[]
+  scene_count: number
   previous_chapter_title: string | null
   previous_context: string
   previous_chapter_content: string
@@ -66,6 +69,18 @@ interface NovelWriteCharacter {
   aliases: string[]
   definition: string
   selected: boolean
+}
+
+interface NovelWriteScene {
+  id: string
+  name: string
+  definition: string
+  selected: boolean
+}
+
+interface SceneOrderUpdatedDetail {
+  projectId: string
+  scenes: Array<{ id: string; sort_order: number }>
 }
 
 interface AnalysisReportItem {
@@ -81,6 +96,7 @@ type EditableNovelWriteContextKey =
   | 'chapter_title'
   | 'chapter_summary'
   | 'character_definitions'
+  | 'scene_context'
   | 'previous_context'
   | 'previous_chapter_content'
   | 'style_requirements'
@@ -186,6 +202,15 @@ const buildCharacterDefinitions = (characters: NovelWriteCharacter[]) => {
     : '暂无人物定义'
 }
 
+const buildSceneContext = (scenes: NovelWriteScene[]) => {
+  const selected = scenes.filter((scene) => scene.selected)
+  return selected.length > 0
+    ? selected.map((scene) => scene.definition).join('\n\n')
+    : '暂无场景信息'
+}
+
+const SCENE_ORDER_UPDATED_EVENT = 'scene-order-updated'
+
 let toastId = 0
 
 export const NovelContent: React.FC = () => {
@@ -264,6 +289,42 @@ export const NovelContent: React.FC = () => {
     void loadInitialData()
     return () => {
       cancelled = true
+    }
+  }, [projectId])
+
+  useEffect(() => {
+    if (!projectId) return
+
+    const handleSceneOrderUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<SceneOrderUpdatedDetail>).detail
+      if (!detail || detail.projectId !== projectId) return
+
+      const orderMap = new Map(
+        detail.scenes.map((scene, index) => [scene.id, index])
+      )
+      setWriteContext((prev) => {
+        if (!prev?.scenes) return prev
+        const scenes = [...prev.scenes].sort((a, b) => {
+          const aOrder = orderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER
+          const bOrder = orderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER
+          if (aOrder !== bOrder) return aOrder - bOrder
+          return prev.scenes!.findIndex((scene) => scene.id === a.id) -
+            prev.scenes!.findIndex((scene) => scene.id === b.id)
+        })
+        return {
+          ...prev,
+          scenes,
+          scene_context: buildSceneContext(scenes),
+        }
+      })
+    }
+
+    window.addEventListener(SCENE_ORDER_UPDATED_EVENT, handleSceneOrderUpdated)
+    return () => {
+      window.removeEventListener(
+        SCENE_ORDER_UPDATED_EVENT,
+        handleSceneOrderUpdated
+      )
     }
   }, [projectId])
 
@@ -359,6 +420,9 @@ export const NovelContent: React.FC = () => {
         character_definitions: result.characters?.length
           ? buildCharacterDefinitions(result.characters)
           : result.character_definitions,
+        scene_context: result.scenes?.length
+          ? buildSceneContext(result.scenes)
+          : result.scene_context,
       })
     } catch {
       showToast('error', '加载 AI 输入失败')
@@ -403,6 +467,35 @@ export const NovelContent: React.FC = () => {
     })
   }
 
+  const updateSceneSelection = (sceneId: string, selected: boolean) => {
+    setWriteContext((prev) => {
+      if (!prev?.scenes) return prev
+      const scenes = prev.scenes.map((scene) =>
+        scene.id === sceneId ? { ...scene, selected } : scene
+      )
+      return {
+        ...prev,
+        scenes,
+        scene_context: buildSceneContext(scenes),
+      }
+    })
+  }
+
+  const setAllScenesSelected = (selected: boolean) => {
+    setWriteContext((prev) => {
+      if (!prev?.scenes) return prev
+      const scenes = prev.scenes.map((scene) => ({
+        ...scene,
+        selected,
+      }))
+      return {
+        ...prev,
+        scenes,
+        scene_context: buildSceneContext(scenes),
+      }
+    })
+  }
+
   const buildWriteContextPayload = () => {
     if (!writeContext) return null
     return {
@@ -411,6 +504,7 @@ export const NovelContent: React.FC = () => {
       chapter_title: writeContext.chapter_title,
       chapter_summary: writeContext.chapter_summary,
       character_definitions: writeContext.character_definitions,
+      scene_context: writeContext.scene_context,
       previous_context: writeContext.previous_context,
       previous_chapter_content: writeContext.previous_chapter_content,
       style_requirements: writeContext.style_requirements,
@@ -1075,6 +1169,83 @@ export const NovelContent: React.FC = () => {
                         'character_definitions',
                         e.target.value
                       )
+                    }
+                  />
+                )}
+              </div>
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-gray-500">
+                    场景信息（
+                    {writeContext.scenes
+                      ? writeContext.scenes.filter((scene) => scene.selected)
+                          .length
+                      : 0}
+                    /{writeContext.scene_count}）
+                  </div>
+                  {writeContext.scenes && writeContext.scenes.length > 0 && (
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAllScenesSelected(true)}
+                      >
+                        全部加入
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setAllScenesSelected(false)}
+                      >
+                        清空
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                {writeContext.scenes && writeContext.scenes.length > 0 ? (
+                  <div className="grid max-h-72 gap-2 overflow-auto rounded border bg-gray-50 p-2 sm:grid-cols-2">
+                    {writeContext.scenes.map((scene) => (
+                      <button
+                        key={scene.id}
+                        type="button"
+                        onClick={() =>
+                          updateSceneSelection(scene.id, !scene.selected)
+                        }
+                        className={`rounded-md border p-3 text-left transition-colors ${
+                          scene.selected
+                            ? 'border-emerald-300 bg-white ring-1 ring-emerald-100'
+                            : 'border-gray-200 bg-gray-100 text-gray-400'
+                        }`}
+                      >
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium text-gray-800">
+                              {scene.name}
+                            </div>
+                          </div>
+                          <span
+                            className={`shrink-0 rounded px-2 py-0.5 text-xs ${
+                              scene.selected
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-gray-200 text-gray-500'
+                            }`}
+                          >
+                            {scene.selected ? '已加入' : '未加入'}
+                          </span>
+                        </div>
+                        <div className="line-clamp-4 whitespace-pre-wrap text-xs leading-relaxed text-gray-500">
+                          {scene.definition}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <textarea
+                    className="w-full resize-y rounded border p-2 text-xs leading-relaxed text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    rows={5}
+                    value={writeContext.scene_context}
+                    onChange={(e) =>
+                      updateWriteContext('scene_context', e.target.value)
                     }
                   />
                 )}

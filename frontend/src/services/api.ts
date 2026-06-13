@@ -103,6 +103,28 @@ export const characterApi = {
     api.delete(`/projects/${projectId}/characters/relationships/${id}`),
 }
 
+export const sceneApi = {
+  list: (projectId: string) =>
+    api.get(`/projects/${projectId}/scenes`),
+  get: (projectId: string, id: string) =>
+    api.get(`/projects/${projectId}/scenes/${id}`),
+  create: (projectId: string, data: Record<string, unknown>) =>
+    api.post(`/projects/${projectId}/scenes`, data),
+  update: (projectId: string, id: string, data: Record<string, unknown>) =>
+    api.put(`/projects/${projectId}/scenes/${id}`, data),
+  delete: (projectId: string, id: string) =>
+    api.delete(`/projects/${projectId}/scenes/${id}`),
+  move: (projectId: string, id: string, newOrder: number) =>
+    api.put(`/projects/${projectId}/scenes/${id}/move`, {
+      new_order: newOrder,
+    }),
+  importFromText: (projectId: string, llmConfigId: string, textContent: string) =>
+    api.post(`/projects/${projectId}/scenes/import`, {
+      llm_config_id: llmConfigId,
+      text_content: textContent,
+    }),
+}
+
 export const chapterApi = {
   list: (projectId: string) =>
     api.get(`/projects/${projectId}/chapters`),

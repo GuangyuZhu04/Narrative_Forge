@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.llm.json_mode import json_object_response_kwargs
 from app.llm.prompts.consistency import (
     CONSISTENCY_CHARACTER_PERSONALITY_SYSTEM,
     CONSISTENCY_CHARACTER_PERSONALITY_USER,
@@ -369,7 +370,10 @@ class ConsistencyService:
             {"role": "user", "content": user_template.format(**context)},
         ]
         response = await llm_orchestrator.chat(
-            llm_config_id, messages, temperature=temperature
+            llm_config_id,
+            messages,
+            temperature=temperature,
+            **json_object_response_kwargs(),
         )
         return json.loads(response)
 
@@ -391,6 +395,7 @@ class ConsistencyService:
             llm_config_id,
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             temperature=temperature,
+            **json_object_response_kwargs(),
         ):
             yield chunk
 

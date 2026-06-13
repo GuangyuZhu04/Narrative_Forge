@@ -3,6 +3,7 @@ import json
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.llm.json_mode import json_object_response_kwargs
 from app.models.outline import Outline, OutlineNode
 from app.schemas.outline import OutlineCreate, OutlineUpdate, OutlineNodeCreate, OutlineNodeUpdate
 from app.services.llm_orchestrator import llm_orchestrator
@@ -154,7 +155,10 @@ class OutlineService:
             db, OUTLINE_GENERATE_TEMPERATURE_KEY
         )
         response = await llm_orchestrator.chat(
-            llm_config_id, messages, temperature=temperature
+            llm_config_id,
+            messages,
+            temperature=temperature,
+            **json_object_response_kwargs(),
         )
         outline_data = json.loads(response)
         outline = Outline(
@@ -241,6 +245,7 @@ class OutlineService:
             llm_config_id,
             messages,
             temperature=float(prompt_values[OUTLINE_EXPAND_TEMPERATURE_KEY]),
+            **json_object_response_kwargs(),
         )
         children_data = json.loads(response)
         created = []
@@ -309,6 +314,7 @@ class OutlineService:
             llm_config_id,
             messages,
             temperature=float(prompt_values[OUTLINE_OPTIMIZE_TEMPERATURE_KEY]),
+            **json_object_response_kwargs(),
         )
         return json.loads(response)
 

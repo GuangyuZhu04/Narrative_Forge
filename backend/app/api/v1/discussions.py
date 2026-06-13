@@ -163,15 +163,19 @@ async def stream_discussion_message(
                     db, DISCUSSION_TEMPERATURE_KEY
                 )
 
-            async for chunk in llm_orchestrator.stream_chat(
+            async for event in llm_orchestrator.stream_chat_events(
                 data.llm_config_id,
                 messages,
                 temperature=temperature,
                 max_tokens=data.max_tokens or DISCUSSION_MAX_TOKENS,
             ):
-                if chunk:
-                    full_content += chunk
-                    yield _sse_data({"type": "chunk", "content": chunk})
+                event_type = event.get("type")
+                content = event.get("content") or ""
+                if event_type == "content" and content:
+                    full_content += content
+                    yield _sse_data({"type": "chunk", "content": content})
+                elif event_type == "thinking" and content:
+                    yield _sse_data({"type": "thinking", "content": content})
                 else:
                     yield _sse_data({"type": "ping"})
 
@@ -186,10 +190,10 @@ async def stream_discussion_message(
                 ),
                 "user_message": DiscussionMessageResponse.model_validate(
                     user_message
-                ).model_dump(mode="json"),
+                ).model_dump(mode="json", exclude={"content"}),
                 "assistant_message": DiscussionMessageResponse.model_validate(
                     assistant_message
-                ).model_dump(mode="json"),
+                ).model_dump(mode="json", exclude={"content"}),
             }
             yield _sse_data(done_payload)
         except LLMOutputTruncatedError:
