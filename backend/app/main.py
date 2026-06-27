@@ -1,13 +1,10 @@
-import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import settings
 from app.core.exceptions import AppException
@@ -25,16 +22,6 @@ from app.api.v1 import (
 )
 from app.db.session import engine
 from app.models.base import Base
-
-
-class SPAStaticFiles(StaticFiles):
-    async def get_response(self, path, scope):
-        try:
-            return await super().get_response(path, scope)
-        except StarletteHTTPException as exc:
-            if exc.status_code == 404:
-                return await super().get_response("index.html", scope)
-            raise
 
 
 async def ensure_runtime_schema(conn):
@@ -93,14 +80,3 @@ async def app_exception_handler(request: Request, exc: AppException):
         status_code=exc.status_code,
         content={"detail": exc.detail, "error_code": exc.error_code},
     )
-
-
-frontend_dist = os.environ.get("NARRATIVE_FORGE_FRONTEND_DIST")
-if frontend_dist:
-    frontend_dist_path = Path(frontend_dist)
-    if (frontend_dist_path / "index.html").exists():
-        app.mount(
-            "/",
-            SPAStaticFiles(directory=str(frontend_dist_path), html=True),
-            name="frontend",
-        )

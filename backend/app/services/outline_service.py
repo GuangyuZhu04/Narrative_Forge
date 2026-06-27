@@ -21,12 +21,10 @@ from app.llm.prompts.outline import (
     OUTLINE_GENERATE_SYSTEM,
     OUTLINE_GENERATE_USER,
     OUTLINE_EXPAND_USER,
-    OUTLINE_STRUCTURE_SYSTEM,
-    OUTLINE_STRUCTURE_USER,
 )
 
-
-ALLOWED_NODE_TYPES = {"VOLUME", "CHAPTER", "SCENE", "PLOT_POINT", "KEY_EVENT"}
+OUTLINE_EXPAND_MAX_TOKENS = 32768
+OUTLINE_EXPAND_BATCH_SIZE = 10
 
 
 class OutlineService:
@@ -187,13 +185,12 @@ class OutlineService:
         parent_id: str | None,
         nodes_data: list[dict],
         start_order: int,
-    ) -> list[OutlineNode]:
-        created = []
+    ):
         for idx, nd in enumerate(nodes_data):
             node = OutlineNode(
                 outline_id=outline_id,
                 parent_id=parent_id,
-                node_type=self._safe_node_type(nd.get("node_type"), "CHAPTER"),
+                node_type=nd.get("node_type", "CHAPTER"),
                 title=nd.get("title", ""),
                 summary=nd.get("summary", ""),
                 sort_order=start_order + idx,
@@ -202,12 +199,10 @@ class OutlineService:
             )
             db.add(node)
             await db.flush()
-            created.append(node)
             if children := nd.get("children"):
                 await self._save_nodes_recursive(
                     db, outline_id, node.id, children, 0
                 )
-        return created
 
     async def expand_node(
         self,
@@ -235,34 +230,46 @@ class OutlineService:
         count = self._parse_expand_count(
             params.get("count", prompt_values[OUTLINE_EXPAND_DEFAULT_COUNT_KEY])
         )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": OUTLINE_EXPAND_USER.format(
-                    parent_type=node.node_type,
-                    parent_title=node.title,
-                    parent_summary=node.summary or "",
-                    siblings_info=params.get("siblings_info", "无"),
-                    expand_request=params.get("request", "请自然扩展"),
-                    count=count,
-                ),
-            },
-        ]
-        response = await llm_orchestrator.chat(
-            llm_config_id,
-            messages,
-            temperature=float(prompt_values[OUTLINE_EXPAND_TEMPERATURE_KEY]),
-            **json_object_response_kwargs(),
-        )
-        children_data = json.loads(response)
+        children_data = []
+        for batch_start in range(0, count, OUTLINE_EXPAND_BATCH_SIZE):
+            batch_count = min(OUTLINE_EXPAND_BATCH_SIZE, count - batch_start)
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": OUTLINE_EXPAND_USER.format(
+                        parent_type=node.node_type,
+                        parent_title=node.title,
+                        parent_summary=node.summary or "",
+                        siblings_info=self._build_expand_siblings_info(
+                            params.get("siblings_info", "无"), children_data
+                        ),
+                        expand_request=self._build_expand_request(
+                            params.get("request", "请自然扩展"),
+                            count,
+                            batch_start,
+                            batch_count,
+                        ),
+                        count=batch_count,
+                    ),
+                },
+            ]
+            response = await llm_orchestrator.chat(
+                llm_config_id,
+                messages,
+                temperature=float(prompt_values[OUTLINE_EXPAND_TEMPERATURE_KEY]),
+                max_tokens=params.get("max_tokens") or OUTLINE_EXPAND_MAX_TOKENS,
+                **json_object_response_kwargs(),
+            )
+            batch_children = self._extract_expand_children(response)
+            children_data.extend(batch_children[:batch_count])
+            if len(children_data) >= count:
+                children_data = children_data[:count]
+                break
+
         created = []
         start_order = await self._get_next_sort_order(db, node.outline_id, node_id)
-        for idx, cd in enumerate(
-            children_data
-            if isinstance(children_data, list)
-            else children_data.get("children", [])
-        ):
+        for idx, cd in enumerate(children_data):
             child = OutlineNode(
                 outline_id=node.outline_id,
                 parent_id=node_id,
@@ -277,6 +284,52 @@ class OutlineService:
             created.append(child)
         await db.commit()
         return created
+
+    @staticmethod
+    def _build_expand_request(
+        request: str,
+        total_count: int,
+        batch_start: int,
+        batch_count: int,
+    ) -> str:
+        base_request = request or "请自然扩展"
+        if total_count <= OUTLINE_EXPAND_BATCH_SIZE:
+            return base_request
+        start = batch_start + 1
+        end = batch_start + batch_count
+        return (
+            f"{base_request}\n"
+            f"本次是批量扩展中的第 {start} 到 {end} 个子节点，"
+            f"总共需要 {total_count} 个子节点。请保持与前后章节顺序连贯，"
+            "避免与已生成子节点重复。"
+        )
+
+    @staticmethod
+    def _build_expand_siblings_info(
+        siblings_info: str,
+        generated_children: list[dict],
+    ) -> str:
+        generated_titles = [
+            str(child.get("title", "")).strip()
+            for child in generated_children
+            if str(child.get("title", "")).strip()
+        ]
+        if not generated_titles:
+            return siblings_info or "无"
+        generated_info = "本次扩展已生成子节点：" + "、".join(generated_titles)
+        if siblings_info and siblings_info != "无":
+            return f"{siblings_info}\n{generated_info}"
+        return generated_info
+
+    @staticmethod
+    def _extract_expand_children(response: str) -> list[dict]:
+        children_data = json.loads(response)
+        children = (
+            children_data
+            if isinstance(children_data, list)
+            else children_data.get("children") or []
+        )
+        return [child for child in children if isinstance(child, dict)]
 
     @staticmethod
     def _parse_expand_count(value) -> int:
@@ -325,127 +378,6 @@ class OutlineService:
             **json_object_response_kwargs(),
         )
         return json.loads(response)
-
-    async def structure_outline(
-        self,
-        db: AsyncSession,
-        llm_config_id: str,
-        outline_id: str,
-        params: dict | None = None,
-    ) -> list[OutlineNode] | None:
-        tree_data = await self.get_tree(db, outline_id)
-        if not tree_data:
-            return None
-        params = params or {}
-        volume_count = self._parse_expand_count(params.get("volume_count", 3))
-        chapters_per_volume = self._parse_expand_count(
-            params.get("chapters_per_volume", 10)
-        )
-        requirements = params.get("requirements") or "请自然整理为分卷分章结构"
-        outline_json = json.dumps(
-            tree_data,
-            ensure_ascii=False,
-            indent=2,
-            default=str,
-        )
-        messages = [
-            {"role": "system", "content": OUTLINE_STRUCTURE_SYSTEM},
-            {
-                "role": "user",
-                "content": OUTLINE_STRUCTURE_USER.format(
-                    outline_json=outline_json,
-                    volume_count=volume_count,
-                    chapters_per_volume=chapters_per_volume,
-                    requirements=requirements,
-                ),
-            },
-        ]
-        temperature = await system_prompt_service.get_effective_float(
-            db, OUTLINE_GENERATE_TEMPERATURE_KEY
-        )
-        response = await llm_orchestrator.chat(
-            llm_config_id,
-            messages,
-            temperature=temperature,
-            **json_object_response_kwargs(),
-        )
-        nodes_data = self._normalize_structured_outline(json.loads(response))
-        if not nodes_data:
-            return []
-
-        start_order = await self._get_next_sort_order(db, outline_id, None)
-        created = await self._save_nodes_recursive(
-            db, outline_id, None, nodes_data, start_order
-        )
-        await db.commit()
-        for node in created:
-            await db.refresh(node)
-        return created
-
-    @staticmethod
-    def _safe_node_type(value, default: str) -> str:
-        node_type = str(value or default).upper()
-        return node_type if node_type in ALLOWED_NODE_TYPES else default
-
-    def _normalize_structured_outline(self, payload) -> list[dict]:
-        if isinstance(payload, list):
-            raw_nodes = payload
-        elif isinstance(payload, dict):
-            raw_nodes = payload.get("children", [])
-        else:
-            raw_nodes = []
-        if not isinstance(raw_nodes, list):
-            return []
-
-        volumes = []
-        loose_chapters = []
-        for raw_node in raw_nodes:
-            if not isinstance(raw_node, dict):
-                continue
-            node_type = self._safe_node_type(raw_node.get("node_type"), "VOLUME")
-            if node_type == "VOLUME":
-                volumes.append(self._normalize_outline_node(raw_node, "VOLUME"))
-            else:
-                loose_chapters.append(self._normalize_outline_node(raw_node, "CHAPTER"))
-
-        if loose_chapters:
-            volumes.append(
-                {
-                    "node_type": "VOLUME",
-                    "title": "AI 分卷",
-                    "summary": "根据现有大纲自动整理的章节安排。",
-                    "metadata": {},
-                    "children": loose_chapters,
-                }
-            )
-        return volumes
-
-    def _normalize_outline_node(self, raw_node: dict, default_type: str) -> dict:
-        node_type = self._safe_node_type(raw_node.get("node_type"), default_type)
-        if default_type == "VOLUME" and node_type != "VOLUME":
-            node_type = "VOLUME"
-        if default_type == "CHAPTER" and node_type == "VOLUME":
-            node_type = "CHAPTER"
-        title = str(raw_node.get("title") or "未命名节点").strip() or "未命名节点"
-        summary = str(raw_node.get("summary") or "").strip()
-        metadata = raw_node.get("metadata")
-        children = raw_node.get("children")
-        if children is None and isinstance(raw_node.get("chapters"), list):
-            children = raw_node.get("chapters")
-        normalized_children = []
-        if isinstance(children, list):
-            normalized_children = [
-                self._normalize_outline_node(child, "CHAPTER")
-                for child in children
-                if isinstance(child, dict)
-            ]
-        return {
-            "node_type": node_type,
-            "title": title,
-            "summary": summary,
-            "metadata": metadata if isinstance(metadata, dict) else {},
-            "children": normalized_children,
-        }
 
     async def add_node(
         self, db: AsyncSession, data: OutlineNodeCreate

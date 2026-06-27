@@ -288,9 +288,8 @@ async def test_create_character():
         project_id = project_resp.json()["id"]
 
         response = await client.post(
-            "/api/v1/characters",
+            f"/api/v1/projects/{project_id}/characters",
             json={
-                "project_id": project_id,
                 "name": "林远",
                 "basic_info": {"age": "35", "gender": "男"},
             },
@@ -312,9 +311,8 @@ async def test_create_chapter():
         project_id = project_resp.json()["id"]
 
         response = await client.post(
-            "/api/v1/chapters",
+            f"/api/v1/projects/{project_id}/chapters",
             json={
-                "project_id": project_id,
                 "title": "第一章",
                 "sort_order": 0,
             },
@@ -337,28 +335,27 @@ async def test_chapter_version():
         project_id = project_resp.json()["id"]
 
         chapter_resp = await client.post(
-            "/api/v1/chapters",
+            f"/api/v1/projects/{project_id}/chapters",
             json={
-                "project_id": project_id,
                 "title": "版本测试章",
             },
         )
         chapter_id = chapter_resp.json()["id"]
 
         await client.put(
-            f"/api/v1/chapters/{chapter_id}",
+            f"/api/v1/projects/{project_id}/chapters/{chapter_id}",
             json={"content": "第一版内容", "word_count": 5},
         )
 
         version_resp = await client.post(
-            f"/api/v1/chapters/{chapter_id}/versions",
+            f"/api/v1/projects/{project_id}/chapters/{chapter_id}/versions",
             json={"change_summary": "初始版本"},
         )
         assert version_resp.status_code == 201
         assert version_resp.json()["version_number"] == 1
 
         versions_resp = await client.get(
-            f"/api/v1/chapters/{chapter_id}/versions"
+            f"/api/v1/projects/{project_id}/chapters/{chapter_id}/versions"
         )
         assert versions_resp.status_code == 200
         assert len(versions_resp.json()["data"]) >= 1
@@ -376,9 +373,8 @@ async def test_create_outline():
         project_id = project_resp.json()["id"]
 
         response = await client.post(
-            "/api/v1/outlines",
+            f"/api/v1/projects/{project_id}/outlines",
             json={
-                "project_id": project_id,
                 "title": "测试大纲",
             },
         )
@@ -398,8 +394,8 @@ async def test_export_project():
         project_id = project_resp.json()["id"]
 
         response = await client.post(
-            "/api/v1/export",
-            json={"project_id": project_id, "format": "txt"},
+            f"/api/v1/projects/{project_id}/export",
+            json={"format": "txt"},
         )
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/plain; charset=utf-8"

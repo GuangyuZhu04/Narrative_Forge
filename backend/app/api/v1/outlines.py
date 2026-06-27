@@ -1,9 +1,8 @@
-import json
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, verify_project_access
+from app.llm.providers.base import LLMContentFilteredError, LLMOutputTruncatedError
 from app.models.project import Project
 from app.services.outline_service import outline_service
 from app.schemas.outline import (
@@ -18,7 +17,6 @@ from app.schemas.outline import (
     OutlineGenerateRequest,
     OutlineExpandRequest,
     OutlineOptimizeRequest,
-    OutlineStructureRequest,
 )
 from app.core.exceptions import OutlineNotFoundException
 
@@ -96,9 +94,23 @@ async def expand_node(
     db: AsyncSession = Depends(get_db),
     project: Project = Depends(verify_project_access),
 ):
-    nodes = await outline_service.expand_node(
-        db, data.llm_config_id, node_id, data.params
-    )
+    try:
+        nodes = await outline_service.expand_node(
+            db, data.llm_config_id, node_id, data.params
+        )
+    except LLMOutputTruncatedError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "AI 扩展内容达到模型长度限制。系统已自动分批并提高默认输出预算；如果仍失败，"
+                "请减少本次子节点数量，或在当前 LLM 配置中使用支持更大输出的模型。"
+            ),
+        ) from exc
+    except LLMContentFilteredError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="AI 扩展被模型安全策略中断，请调整节点内容或扩展要求后重试。",
+        ) from exc
     return {
         "data": [OutlineNodeResponse.model_validate(n).model_dump() for n in nodes]
     }
@@ -116,24 +128,6 @@ async def optimize_outline(
         db, data.llm_config_id, outline_id, data.direction
     )
     return result
-
-
-@router.post("/{outline_id}/structure", status_code=201)
-async def structure_outline(
-    project_id: str,
-    outline_id: str,
-    data: OutlineStructureRequest,
-    db: AsyncSession = Depends(get_db),
-    project: Project = Depends(verify_project_access),
-):
-    nodes = await outline_service.structure_outline(
-        db, data.llm_config_id, outline_id, data.params
-    )
-    if nodes is None:
-        raise OutlineNotFoundException()
-    return {
-        "data": [OutlineNodeResponse.model_validate(n).model_dump() for n in nodes]
-    }
 
 
 @router.post("/nodes", response_model=OutlineNodeResponse, status_code=201)

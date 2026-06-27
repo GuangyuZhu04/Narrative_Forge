@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { useNavigate, useLocation, useParams, useOutlet } from 'react-router-dom'
 import { useProjectStore } from '@/stores/projectStore'
+import { RenameProjectModal } from '@/modules/project/RenameProjectModal'
 import {
   FileText,
   Users,
@@ -13,6 +14,7 @@ import {
   PenLine,
   MessageSquare,
   MapPinned,
+  Pencil,
 } from 'lucide-react'
 
 const workspaceNavItems = [
@@ -50,6 +52,7 @@ export const ProjectWorkspace: React.FC = () => {
   const outlet = useOutlet()
   const { currentProject, setCurrentProject, fetchProjects } = useProjectStore()
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [showRename, setShowRename] = useState(false)
   const mainRef = useRef<HTMLElement | null>(null)
   const outletCacheRef = useRef<Map<string, React.ReactElement>>(new Map())
   const scrollPositionsRef = useRef<Record<string, number>>({})
@@ -117,9 +120,20 @@ export const ProjectWorkspace: React.FC = () => {
             >
               <ArrowLeft className="h-3 w-3" /> 返回项目列表
             </button>
-            <p className="truncate text-sm font-medium text-blue-600">
-              {currentProject.name}
-            </p>
+            <div className="flex items-center gap-1">
+              <p className="min-w-0 flex-1 truncate text-sm font-medium text-blue-600">
+                {currentProject.name}
+              </p>
+              <button
+                type="button"
+                title="修改项目名称"
+                aria-label="修改项目名称"
+                onClick={() => setShowRename(true)}
+                className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -164,6 +178,11 @@ export const ProjectWorkspace: React.FC = () => {
           </div>
         ))}
       </main>
+      <RenameProjectModal
+        open={showRename}
+        project={currentProject}
+        onClose={() => setShowRename(false)}
+      />
     </div>
   )
 }

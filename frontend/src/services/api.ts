@@ -41,16 +41,11 @@ export const outlineApi = {
     api.post(`/projects/${projectId}/outlines/nodes/${nodeId}/expand`, {
       llm_config_id: llmConfigId,
       params,
-    }),
+    }, { timeout: 600000 }),
   optimize: (projectId: string, llmConfigId: string, outlineId: string, direction?: string) =>
     api.post(`/projects/${projectId}/outlines/${outlineId}/optimize`, {
       llm_config_id: llmConfigId,
       direction,
-    }),
-  structure: (projectId: string, llmConfigId: string, outlineId: string, params: Record<string, unknown>) =>
-    api.post(`/projects/${projectId}/outlines/${outlineId}/structure`, {
-      llm_config_id: llmConfigId,
-      params,
     }),
   addNode: (projectId: string, data: Record<string, unknown>) =>
     api.post(`/projects/${projectId}/outlines/nodes`, data),

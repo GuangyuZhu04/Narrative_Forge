@@ -17,24 +17,6 @@ def app_dir() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def bundle_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(getattr(sys, "_MEIPASS", app_dir())).resolve()
-    return app_dir()
-
-
-def frontend_dist_dir(root: Path) -> Path | None:
-    candidates = []
-    if getattr(sys, "frozen", False):
-        candidates.append(bundle_dir() / "frontend_dist")
-    candidates.append(root / "frontend" / "dist")
-
-    for candidate in candidates:
-        if (candidate / "index.html").exists():
-            return candidate
-    return None
-
-
 def find_free_port(start: int = 8765, attempts: int = 100) -> int:
     for port in range(start, start + attempts):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -66,10 +48,6 @@ def main() -> None:
     data_dir = root / "data"
     uploads_dir = data_dir / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)
-
-    frontend_dir = frontend_dist_dir(root)
-    if frontend_dir:
-        os.environ["NARRATIVE_FORGE_FRONTEND_DIST"] = str(frontend_dir)
 
     os.environ["DATABASE_URL"] = os.environ.get(
         "NARRATIVE_FORGE_DATABASE_URL",

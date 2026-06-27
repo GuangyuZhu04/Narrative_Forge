@@ -19,11 +19,6 @@ data/uploads/
 
 ## 重新构建
 
-需要先安装：
-
-- Node.js LTS（包含 `npm`）
-- Python 3.11 或更高版本
-
 在项目根目录运行：
 
 ```powershell
@@ -31,10 +26,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-exe.ps1
 ```
 
 脚本会构建前端、安装后端依赖与 PyInstaller，并重新生成 `dist/NarrativeForge.exe`。
-
-如果 `frontend/node_modules` 已存在但缺少 `tsc` 或 `vite`，脚本会自动使用 `npm ci` 重新安装前端依赖，避免依赖目录残缺导致打包失败。
-
-打包后的 exe 会内置 `frontend/dist`，启动时由本地 FastAPI 服务直接提供前端页面。
 
 ## 可选环境变量
 

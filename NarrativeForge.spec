@@ -1,24 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
-
 from PyInstaller.utils.hooks import collect_submodules
 
-ROOT = Path(SPECPATH).resolve()
-FRONTEND_DIST = ROOT / "frontend" / "dist"
+ROOT = Path.cwd()
 APP_HIDDEN_IMPORTS = collect_submodules("app")
 
-if not (FRONTEND_DIST / "index.html").exists():
-    raise SystemExit(
-        "Missing frontend/dist/index.html. Run scripts/build-windows-exe.ps1 first."
-    )
-
 a = Analysis(
-    [str(ROOT / "backend" / "desktop_launcher.py")],
+    ["backend/desktop_launcher.py"],
     pathex=[str(ROOT / "backend")],
     binaries=[],
     datas=[
-        (str(FRONTEND_DIST), "frontend_dist"),
+        (str(ROOT / "frontend" / "dist"), "frontend_dist"),
         (str(ROOT / "backend" / ".env.example"), "."),
     ],
     hiddenimports=APP_HIDDEN_IMPORTS

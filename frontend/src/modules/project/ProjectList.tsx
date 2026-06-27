@@ -5,12 +5,15 @@ import { projectApi } from '@/services/api'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
-import { Plus, Trash2, Settings, FolderOpen } from 'lucide-react'
+import { RenameProjectModal } from '@/modules/project/RenameProjectModal'
+import type { Project } from '@/types'
+import { Plus, Trash2, Settings, FolderOpen, Pencil } from 'lucide-react'
 
 export const ProjectList: React.FC = () => {
   const navigate = useNavigate()
   const { projects, fetchProjects, setCurrentProject } = useProjectStore()
   const [showCreate, setShowCreate] = useState(false)
+  const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
 
@@ -32,8 +35,8 @@ export const ProjectList: React.FC = () => {
     fetchProjects()
   }
 
-  const handleOpen = (project: Record<string, unknown>) => {
-    setCurrentProject(project as unknown as Parameters<typeof setCurrentProject>[0])
+  const handleOpen = (project: Project) => {
+    setCurrentProject(project)
     navigate(`/projects/${project.id}/outline`)
   }
 
@@ -76,22 +79,40 @@ export const ProjectList: React.FC = () => {
               <div
                 key={p.id}
                 className="group cursor-pointer rounded-lg border bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
-                onClick={() => handleOpen(p as unknown as Record<string, unknown>)}
+                onClick={() => handleOpen(p)}
               >
                 <div className="flex items-start justify-between">
-                  <h3 className="text-lg font-medium text-gray-800">
+                  <h3 className="min-w-0 flex-1 truncate text-lg font-medium text-gray-800">
                     {p.name}
                   </h3>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleDelete(p.id)
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4 text-red-400" />
-                  </Button>
+                  <div className="ml-2 flex flex-shrink-0 gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      title="修改项目名称"
+                      aria-label="修改项目名称"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setEditingProject(p)
+                      }}
+                    >
+                      <Pencil className="h-4 w-4 text-gray-400" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      title="删除项目"
+                      aria-label="删除项目"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDelete(p.id)
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 text-red-400" />
+                    </Button>
+                  </div>
                 </div>
                 {p.description && (
                   <p className="mt-2 text-sm text-gray-500 line-clamp-2">
@@ -137,6 +158,11 @@ export const ProjectList: React.FC = () => {
           </div>
         </div>
       </Modal>
+      <RenameProjectModal
+        open={Boolean(editingProject)}
+        project={editingProject}
+        onClose={() => setEditingProject(null)}
+      />
     </div>
   )
 }

@@ -22,7 +22,6 @@ import {
   GripVertical,
   Maximize2,
   Minimize2,
-  ListTree,
 } from 'lucide-react'
 import type { OutlineNode, SystemPromptSetting } from '@/types'
 
@@ -47,6 +46,12 @@ interface DraggedNode {
 let toastId = 0
 const OUTLINE_EXPAND_SYSTEM_KEY = 'outline_expand.system'
 const OUTLINE_EXPAND_DEFAULT_COUNT_KEY = 'outline_expand.default_count'
+
+const getApiErrorDetail = (error: unknown, fallback: string) => {
+  const detail = (error as { response?: { data?: { detail?: unknown } } }).response
+    ?.data?.detail
+  return typeof detail === 'string' ? detail : fallback
+}
 
 export const OutlineEditor: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>()
@@ -83,13 +88,6 @@ export const OutlineEditor: React.FC = () => {
   })
   const [polishDirection, setPolishDirection] = useState('')
   const [polishing, setPolishing] = useState(false)
-  const [showStructureDialog, setShowStructureDialog] = useState(false)
-  const [structuring, setStructuring] = useState(false)
-  const [structureConfig, setStructureConfig] = useState({
-    volume_count: 3,
-    chapters_per_volume: 10,
-    requirements: '',
-  })
   const [expandConfig, setExpandConfig] = useState<ExpandConfig | null>(null)
   const [expandDefaultsLoading, setExpandDefaultsLoading] = useState(false)
   const [editOutlineFullscreen, setEditOutlineFullscreen] = useState(false)
@@ -116,18 +114,13 @@ export const OutlineEditor: React.FC = () => {
     if (projectId) {
       fetchOutlines(projectId)
     }
-  }, [projectId, fetchOutlines])
+  }, [projectId])
 
   useEffect(() => {
-    if (!projectId || outlines.length === 0) return
-    const currentOutlineAvailable =
-      !!currentOutline &&
-      currentOutline.project_id === projectId &&
-      outlines.some((outline) => outline.id === currentOutline.id)
-    if (!currentOutlineAvailable) {
-      fetchTree(projectId, outlines[0].id)
+    if (outlines.length > 0 && !currentOutline) {
+      fetchTree(projectId!, outlines[0].id)
     }
-  }, [projectId, outlines, currentOutline, fetchTree])
+  }, [outlines, currentOutline])
 
   const handleCreateOutline = async () => {
     if (!projectId || !newTitle.trim()) return
@@ -226,36 +219,6 @@ export const OutlineEditor: React.FC = () => {
     }
   }
 
-  const handleStructureOutline = async () => {
-    const cfgId = await getActiveLLMConfigId()
-    if (!cfgId || !projectId || !currentOutline) {
-      showToast('error', '请先配置 LLM')
-      return
-    }
-    if (currentTree.length === 0 && !currentOutline.description?.trim()) {
-      showToast('error', '请先补充当前大纲内容')
-      return
-    }
-    setStructuring(true)
-    try {
-      await outlineApi.structure(projectId, cfgId, currentOutline.id, {
-        volume_count: parseExpandCount(structureConfig.volume_count),
-        chapters_per_volume: parseExpandCount(
-          structureConfig.chapters_per_volume
-        ),
-        requirements: structureConfig.requirements,
-      })
-      await fetchTree(projectId, currentOutline.id)
-      setShowStructureDialog(false)
-      setAllExpanded(true)
-      showToast('success', 'AI 分卷分章完成')
-    } catch {
-      showToast('error', 'AI 分卷分章失败，请检查 LLM 配置')
-    } finally {
-      setStructuring(false)
-    }
-  }
-
   const handleAddChild = useCallback(
     async (parentId: string | null, nodeType: string) => {
       if (!projectId || !currentOutline) {
@@ -339,8 +302,11 @@ export const OutlineEditor: React.FC = () => {
         setExpandConfig(null)
         await fetchTree(projectId, currentOutline.id)
         showToast('success', `节点扩展成功，已请求生成 ${count} 个子节点`)
-      } catch {
-        showToast('error', 'AI 扩展失败，请检查 LLM 配置')
+      } catch (error) {
+        showToast(
+          'error',
+          getApiErrorDetail(error, 'AI 扩展失败，请检查 LLM 配置')
+        )
       } finally {
         setActionLoading(null)
       }
@@ -492,19 +458,6 @@ export const OutlineEditor: React.FC = () => {
                 >
                   <Wand2 className="mr-1 h-4 w-4" /> AI 打磨
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowStructureDialog(true)}
-                  disabled={structuring}
-                >
-                  {structuring ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                  ) : (
-                    <ListTree className="mr-1 h-4 w-4" />
-                  )}
-                  AI 分卷分章
-                </Button>
               </>
             )}
             <Button
@@ -536,13 +489,6 @@ export const OutlineEditor: React.FC = () => {
             <div className="text-center">
               <Loader2 className="mx-auto mb-2 h-8 w-8 animate-spin text-purple-500" />
               <p className="text-gray-500">AI 正在打磨大纲...</p>
-            </div>
-          </div>
-        ) : structuring ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              <Loader2 className="mx-auto mb-2 h-8 w-8 animate-spin text-blue-500" />
-              <p className="text-gray-500">AI 正在分卷分章...</p>
             </div>
           </div>
         ) : !currentOutline ? (
@@ -763,85 +709,6 @@ export const OutlineEditor: React.FC = () => {
             </Button>
             <Button onClick={handlePolish} disabled={polishing}>
               {polishing ? '打磨中...' : '开始打磨'}
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
-        open={showStructureDialog}
-        onClose={() => setShowStructureDialog(false)}
-        title="AI 分卷分章"
-      >
-        <div className="space-y-4">
-          {currentOutline && (
-            <div className="rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-600">
-              当前大纲：
-              <span className="font-medium text-gray-800">
-                {currentOutline.title}
-              </span>
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label="目标卷数"
-              type="number"
-              min={1}
-              max={100}
-              value={structureConfig.volume_count}
-              onChange={(e) =>
-                setStructureConfig({
-                  ...structureConfig,
-                  volume_count: parseExpandCount(e.target.value),
-                })
-              }
-            />
-            <Input
-              label="每卷章节数"
-              type="number"
-              min={1}
-              max={100}
-              value={structureConfig.chapters_per_volume}
-              onChange={(e) =>
-                setStructureConfig({
-                  ...structureConfig,
-                  chapters_per_volume: parseExpandCount(e.target.value),
-                })
-              }
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              补充要求
-            </label>
-            <textarea
-              className="w-full resize-y rounded-md border p-2 text-sm leading-relaxed text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              rows={4}
-              value={structureConfig.requirements}
-              onChange={(e) =>
-                setStructureConfig({
-                  ...structureConfig,
-                  requirements: e.target.value,
-                })
-              }
-              placeholder="例如：每卷结尾留悬念，章节摘要要能直接用于正文生成"
-            />
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setShowStructureDialog(false)}
-              disabled={structuring}
-            >
-              取消
-            </Button>
-            <Button onClick={handleStructureOutline} disabled={structuring}>
-              {structuring ? (
-                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="mr-1 h-4 w-4" />
-              )}
-              开始生成
             </Button>
           </div>
         </div>

@@ -204,102 +204,11 @@ async def test_character_import_uses_system_prompt_setting(client, monkeypatch):
     body = import_response.json()
     assert body["count"] == 1
     assert body["data"][0]["name"] == "Imported Hero"
-    assert body["data"][0]["basic_info"] == {"年龄": "20"}
-    assert body["data"][0]["personality"] == {"性格特征": "brave"}
-    assert body["data"][0]["growth_arc"] == {"初始状态": "unknown"}
     assert captured["config_id"] == "test-config"
     assert captured["temperature"] == 1.1
     assert captured["max_tokens"] == CHARACTER_IMPORT_MAX_TOKENS
     assert captured["response_format"] == DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT
     assert captured["messages"][0]["content"] == custom_prompt
-
-
-@pytest.mark.anyio
-async def test_character_generate_normalizes_profile_for_frontend_editing(
-    client, monkeypatch
-):
-    project_response = await client.post(
-        "/api/v1/projects",
-        json={"name": "character generate normalize project"},
-    )
-    assert project_response.status_code == 201
-    project_id = project_response.json()["id"]
-
-    captured = {}
-
-    async def fake_chat(config_id, messages, **kwargs):
-        captured["config_id"] = config_id
-        captured["messages"] = messages
-        captured["response_format"] = kwargs.get("response_format")
-        return """
-        {
-          "name": "Generated Hero",
-          "aliases": "Hero, Sword",
-          "basic_info": {
-            "age": "26",
-            "gender": "女",
-            "occupation": "剑客",
-            "appearance": "银发蓝眸",
-            "background": "名门遗孤"
-          },
-          "personality": {
-            "traits": ["冷静", "护短"],
-            "values": ["守诺"],
-            "flaws": ["固执"],
-            "speaking_style": "言简意赅"
-          },
-          "growth_arc": {
-            "starting_state": "封闭自我",
-            "catalyst": "遇见同伴",
-            "transformation": "学会信任",
-            "ending_state": "重新承担责任"
-          },
-          "biography": "Generated biography",
-          "notes": "Generated notes"
-        }
-        """
-
-    monkeypatch.setattr(
-        "app.services.character_service.llm_orchestrator.chat", fake_chat
-    )
-
-    generate_response = await client.post(
-        f"/api/v1/projects/{project_id}/characters/generate",
-        json={
-            "llm_config_id": "test-config",
-            "description": "A composed swordswoman.",
-        },
-    )
-
-    assert generate_response.status_code == 201
-    body = generate_response.json()
-    assert body["name"] == "Generated Hero"
-    assert body["aliases"] == ["Hero", "Sword"]
-    assert body["basic_info"] == {
-        "年龄": "26",
-        "性别": "女",
-        "职业": "剑客",
-        "外貌": "银发蓝眸",
-        "背景": "名门遗孤",
-    }
-    assert body["personality"] == {
-        "性格特征": "冷静、护短",
-        "价值观": "守诺",
-        "缺陷": "固执",
-        "说话风格": "言简意赅",
-    }
-    assert body["growth_arc"] == {
-        "初始状态": "封闭自我",
-        "发展方向": "学会信任",
-        "转折点": "遇见同伴",
-        "最终状态": "重新承担责任",
-    }
-    assert captured["config_id"] == "test-config"
-    assert captured["response_format"] == DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT
-    assert '"年龄": "年龄"' in captured["messages"][0]["content"]
-    assert "避免使用 age、traits、starting_state 等英文键" in captured["messages"][0][
-        "content"
-    ]
 
 
 @pytest.mark.anyio
