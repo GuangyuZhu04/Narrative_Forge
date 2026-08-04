@@ -20,6 +20,13 @@ export const projectApi = {
   create: (data: Record<string, unknown>) => api.post('/projects', data),
   update: (id: string, data: Record<string, unknown>) =>
     api.put(`/projects/${id}`, data),
+  uploadCover: (id: string, file: File) =>
+    api.put(`/projects/${id}/cover`, file, {
+      headers: {
+        'Content-Type': file.type || 'application/octet-stream',
+      },
+    }),
+  deleteCover: (id: string) => api.delete(`/projects/${id}/cover`),
   delete: (id: string) => api.delete(`/projects/${id}`),
 }
 
@@ -46,6 +53,11 @@ export const outlineApi = {
     api.post(`/projects/${projectId}/outlines/${outlineId}/optimize`, {
       llm_config_id: llmConfigId,
       direction,
+    }),
+  structure: (projectId: string, llmConfigId: string, outlineId: string, params: Record<string, unknown>) =>
+    api.post(`/projects/${projectId}/outlines/${outlineId}/structure`, {
+      llm_config_id: llmConfigId,
+      params,
     }),
   addNode: (projectId: string, data: Record<string, unknown>) =>
     api.post(`/projects/${projectId}/outlines/nodes`, data),
@@ -198,13 +210,45 @@ export const chapterApi = {
     chapterId: string,
     llmConfigId: string,
     chapterContent: string,
-    polishSuggestions: string
+    polishSuggestions: string,
+    includePreviousChapter = false,
+    includeNextChapter = false
   ) =>
     api.post(`/projects/${projectId}/chapters/${chapterId}/novel-polish`, {
       llm_config_id: llmConfigId,
       chapter_content: chapterContent,
       polish_suggestions: polishSuggestions,
+      include_previous_chapter: includePreviousChapter,
+      include_next_chapter: includeNextChapter,
     }),
+}
+
+export const novelAgentApi = {
+  write: (projectId: string, data: Record<string, unknown>) =>
+    api.post(`/projects/${projectId}/novel-agent/write`, data, {
+      timeout: 900000,
+    }),
+  listSessions: (projectId: string, mode: string) =>
+    api.get(`/projects/${projectId}/novel-agent/sessions`, {
+      params: { mode },
+    }),
+  createSession: (
+    projectId: string,
+    mode: string,
+    name?: string
+  ) =>
+    api.post(`/projects/${projectId}/novel-agent/sessions`, {
+      mode,
+      name: name || null,
+    }),
+  getSession: (projectId: string, sessionId: string) =>
+    api.get(`/projects/${projectId}/novel-agent/sessions/${sessionId}`),
+  renameSession: (projectId: string, sessionId: string, name: string) =>
+    api.put(`/projects/${projectId}/novel-agent/sessions/${sessionId}`, {
+      name,
+    }),
+  deleteSession: (projectId: string, sessionId: string) =>
+    api.delete(`/projects/${projectId}/novel-agent/sessions/${sessionId}`),
 }
 
 export const discussionApi = {
@@ -302,6 +346,26 @@ export async function getActiveLLMConfigId(): Promise<string | null> {
   return null
 }
 
+export type PlatformExportTarget = 'fanqie' | 'qidian'
+
+export interface PlatformExportPayload {
+  platform: PlatformExportTarget
+  platform_name: string
+  target_url: string
+  project_name: string
+  chapter_count: number
+  total_word_count: number
+  clipboard_text: string
+  chapters: {
+    title: string
+    content: string
+    word_count: number
+    sort_order: number
+    status: string
+  }[]
+  warnings: string[]
+}
+
 export const exportApi = {
   exportProject: (
     projectId: string,
@@ -313,4 +377,84 @@ export const exportApi = {
       { format, options },
       { responseType: 'blob' }
     ),
+  exportToPlatform: (
+    projectId: string,
+    platform: PlatformExportTarget,
+    options?: Record<string, unknown>
+  ) =>
+    api.post(`/projects/${projectId}/export/platform`, {
+      platform,
+      options,
+    }),
+}
+
+export const audiobookApi = {
+  getConfig: (projectId: string) =>
+    api.get(`/projects/${projectId}/audiobook/config`),
+  updateConfig: (projectId: string, data: Record<string, unknown>) =>
+    api.put(`/projects/${projectId}/audiobook/config`, data),
+  updateCharacterVoices: (
+    projectId: string,
+    characterVoices: Record<string, string>
+  ) =>
+    api.patch(`/projects/${projectId}/audiobook/config/character-voices`, {
+      character_voices: characterVoices,
+    }),
+  parseDocs: (projectId: string, llmConfigId: string, apiDocumentation: string) =>
+    api.post(`/projects/${projectId}/audiobook/config/parse-docs`, {
+      llm_config_id: llmConfigId,
+      api_documentation: apiDocumentation,
+    }, { timeout: 600000 }),
+  preview: (projectId: string, text: string, voice?: string) =>
+    api.post(
+      `/projects/${projectId}/audiobook/preview`,
+      { text, voice: voice || null },
+      { responseType: 'blob', timeout: 600000 }
+    ),
+  queryVoices: (projectId: string, voiceType: string) =>
+    api.post(`/projects/${projectId}/audiobook/voices/query`, {
+      voice_type: voiceType,
+    }),
+  designVoice: (
+    projectId: string,
+    data: {
+      prompt: string
+      preview_text: string
+      voice_id?: string | null
+      aigc_watermark: boolean
+    }
+  ) =>
+    api.post(`/projects/${projectId}/audiobook/voices/design`, data, {
+      timeout: 600000,
+    }),
+  deleteVoice: (
+    projectId: string,
+    voiceId: string,
+    voiceType: 'voice_cloning' | 'voice_generation'
+  ) =>
+    api.post(`/projects/${projectId}/audiobook/voices/delete`, {
+      voice_id: voiceId,
+      voice_type: voiceType,
+    }),
+  getScopes: (projectId: string) =>
+    api.get(`/projects/${projectId}/audiobook/scopes`),
+  listJobs: (projectId: string) =>
+    api.get(`/projects/${projectId}/audiobook/jobs`),
+  createJob: (
+    projectId: string,
+    scopeType: string,
+    scopeId: string | null,
+    llmConfigId: string
+  ) =>
+    api.post(`/projects/${projectId}/audiobook/jobs`, {
+      scope_type: scopeType,
+      scope_id: scopeId || null,
+      llm_config_id: llmConfigId,
+    }),
+  cancelJob: (projectId: string, jobId: string) =>
+    api.post(`/projects/${projectId}/audiobook/jobs/${jobId}/cancel`),
+  deleteJob: (projectId: string, jobId: string) =>
+    api.delete(`/projects/${projectId}/audiobook/jobs/${jobId}`),
+  downloadUrl: (projectId: string, jobId: string, filename: string) =>
+    `/api/v1/projects/${encodeURIComponent(projectId)}/audiobook/jobs/${encodeURIComponent(jobId)}/files/${encodeURIComponent(filename)}`,
 }

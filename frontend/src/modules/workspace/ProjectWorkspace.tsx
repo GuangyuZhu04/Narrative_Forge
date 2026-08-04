@@ -15,15 +15,21 @@ import {
   MessageSquare,
   MapPinned,
   Pencil,
+  Headphones,
+  Sparkles,
+  FilePenLine,
 } from 'lucide-react'
 
 const workspaceNavItems = [
+  { path: 'agent', label: 'Agent 生成', icon: Sparkles },
+  { path: 'agent-continue', label: 'Agent 续写改编', icon: FilePenLine },
   { path: 'outline', label: '大纲', icon: FileText },
   { path: 'characters', label: '人物', icon: Users },
   { path: 'scenes', label: '场景', icon: MapPinned },
   { path: 'novel', label: '小说内容', icon: PenLine },
   { path: 'discussion', label: '小说讨论', icon: MessageSquare },
   { path: 'consistency', label: '一致性', icon: Shield },
+  { path: 'audiobook', label: '有声书', icon: Headphones },
   { path: 'export', label: '导出', icon: Download },
 ]
 

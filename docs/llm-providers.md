@@ -6,7 +6,7 @@
 
 | provider | 默认 Base URL | 推荐模型 | 后端消息格式 |
 | --- | --- | --- | --- |
-| `deepseek` | `https://api.deepseek.com` | `deepseek-v4-pro` | OpenAI Chat Completions：`messages[]` |
+| `deepseek` | `https://api.deepseek.com` | `deepseek-v4-pro` / `deepseek-v4-flash` | Chat Completions：`messages[]`；`deepseek-v4-flash` 可走 Responses API：`instructions` + `input[]` |
 | `openai` | `https://api.openai.com/v1` | `gpt-5.5` | Responses API：`instructions` + `input[]` |
 | `anthropic` | `https://api.anthropic.com/v1` | `claude-sonnet-4-6` / `claude-opus-4-8` / `claude-haiku-4-5` | Messages API：`system` + `messages[]` |
 | `google` | `https://generativelanguage.googleapis.com/v1beta` | `gemini-3.5-flash` / `gemini-3.1-pro` | Gemini API：`systemInstruction` + `contents[]` |
@@ -29,11 +29,13 @@
 - OpenAI：`system` / `developer` 合并为 Responses API 的 `instructions`，`user` / `assistant` 转为 `input[]`。
 - Anthropic：`system` / `developer` 合并为顶层 `system`，`user` / `assistant` 转为 Messages API 的 `messages[]`。
 - Google Gemini：`system` / `developer` 合并为 `systemInstruction.parts[]`，`user` 转为 `contents[].role = "user"`，`assistant` 转为 `contents[].role = "model"`。
-- DeepSeek / OpenAI Compatible：保持 Chat Completions 的 `messages[]` 格式。
+- DeepSeek：默认保持 Chat Completions 的 `messages[]` 格式；当模型为 `deepseek-v4-flash`，或调用参数显式传入 `api_mode: "responses"` / `use_responses_api: true` 时，后端会调用 `/responses`，将 `system` / `developer` 合并为 `instructions`，`user` / `assistant` 转为 `input[]`。
+- OpenAI Compatible：保持 Chat Completions 的 `messages[]` 格式。
 
 ## 参数映射
 
 - `max_tokens` 会映射为 OpenAI 的 `max_output_tokens`、Anthropic 的 `max_tokens`、Google 的 `generationConfig.maxOutputTokens`。
+- DeepSeek Responses API 会将 `max_tokens` / `max_completion_tokens` 映射为 `max_output_tokens`，并将 `response_format` 映射为 `text.format`。
 - `temperature` / `top_p` 会尽量透传到对应服务商参数。Google 会转为 `generationConfig.temperature` / `generationConfig.topP`。
 - Anthropic 支持 `top_k`；DeepSeek、OpenAI、Google 默认不强制传 `top_k`。
 - Google 的 `safetySettings` / `safety_settings` 会转为请求体顶层 `safetySettings`。
@@ -42,6 +44,7 @@
 
 - OpenAI latest model guide: <https://developers.openai.com/api/docs/guides/latest-model>
 - OpenAI Responses API: <https://developers.openai.com/api/reference/responses/overview>
+- DeepSeek Responses API: <https://api-docs.deepseek.com/zh-cn/guides/responses_api>
 - Anthropic models: <https://docs.anthropic.com/en/docs/about-claude/models/overview>
 - Anthropic Messages API: <https://docs.anthropic.com/en/api/messages>
 - Google Gemini models: <https://ai.google.dev/gemini-api/docs/models>

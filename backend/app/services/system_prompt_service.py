@@ -17,6 +17,12 @@ from app.llm.prompts.novel_write import (
     NOVEL_WRITE_SYSTEM,
     NOVEL_WRITE_USER,
 )
+from app.llm.prompts.novel_agent import (
+    NOVEL_AGENT_BLUEPRINT_SYSTEM,
+    NOVEL_AGENT_BLUEPRINT_USER,
+    NOVEL_AGENT_CONTINUE_PLAN_SYSTEM,
+    NOVEL_AGENT_CONTINUE_PLAN_USER,
+)
 from app.llm.prompts.outline import OUTLINE_EXPAND_SYSTEM, OUTLINE_OPTIMIZE_SYSTEM
 from app.llm.prompts.scene import SCENE_IMPORT_SYSTEM
 from app.core.exceptions import ValidationException
@@ -59,6 +65,16 @@ CHAPTER_SUMMARIZE_TEMPERATURE_KEY = "chapter_summarize.temperature"
 CHAPTER_DIALOGUE_TEMPERATURE_KEY = "chapter_dialogue.temperature"
 CONSISTENCY_ANALYSIS_TEMPERATURE_KEY = "consistency_analysis.temperature"
 DISCUSSION_TEMPERATURE_KEY = "discussion.temperature"
+NOVEL_AGENT_BLUEPRINT_SYSTEM_KEY = "novel_agent.blueprint_system"
+NOVEL_AGENT_BLUEPRINT_USER_TEMPLATE_KEY = "novel_agent.blueprint_user_template"
+NOVEL_AGENT_BLUEPRINT_TEMPERATURE_KEY = "novel_agent.blueprint_temperature"
+NOVEL_AGENT_CONTINUE_PLAN_SYSTEM_KEY = "novel_agent.continue_plan_system"
+NOVEL_AGENT_CONTINUE_PLAN_USER_TEMPLATE_KEY = (
+    "novel_agent.continue_plan_user_template"
+)
+NOVEL_AGENT_CONTINUE_PLAN_TEMPERATURE_KEY = (
+    "novel_agent.continue_plan_temperature"
+)
 
 SETTING_TYPE_TEXT = "text"
 SETTING_TYPE_NUMBER = "number"
@@ -327,6 +343,48 @@ PROMPT_DEFINITIONS: tuple[PromptDefinition, ...] = (
         "小说讨论 temperature",
         "控制小说讨论中多轮对话的创作发散度；默认 1.3，适合正文情节讨论和稳定输出。",
         "1.3",
+    ),
+    PromptDefinition(
+        NOVEL_AGENT_BLUEPRINT_SYSTEM_KEY,
+        "Agent 生成",
+        "Agent 生成蓝图 system prompt",
+        "控制 Agent 生成如何把一句想法规划为项目、大纲、人物、场景和章节写作蓝图。",
+        NOVEL_AGENT_BLUEPRINT_SYSTEM,
+    ),
+    PromptDefinition(
+        NOVEL_AGENT_BLUEPRINT_USER_TEMPLATE_KEY,
+        "Agent 生成",
+        "Agent 生成蓝图用户模板",
+        "定义作者想法、目标规模、题材、风格和额外要求如何拼接给生成规划模型。",
+        NOVEL_AGENT_BLUEPRINT_USER,
+    ),
+    temperature_definition(
+        NOVEL_AGENT_BLUEPRINT_TEMPERATURE_KEY,
+        "Agent 生成",
+        "Agent 生成蓝图 temperature",
+        "控制 Agent 生成规划蓝图时的创作发散度；默认 1.1，兼顾题材适配和结构稳定。",
+        "1.1",
+    ),
+    PromptDefinition(
+        NOVEL_AGENT_CONTINUE_PLAN_SYSTEM_KEY,
+        "Agent 续写改编",
+        "续写改编 Plan system prompt",
+        "控制 Agent 如何把作者要求规划为章节生成与打磨动作。",
+        NOVEL_AGENT_CONTINUE_PLAN_SYSTEM,
+    ),
+    PromptDefinition(
+        NOVEL_AGENT_CONTINUE_PLAN_USER_TEMPLATE_KEY,
+        "Agent 续写改编",
+        "续写改编 Plan 用户模板",
+        "定义续写改编要求、文风、动作上限和项目章节上下文的拼接方式。",
+        NOVEL_AGENT_CONTINUE_PLAN_USER,
+    ),
+    temperature_definition(
+        NOVEL_AGENT_CONTINUE_PLAN_TEMPERATURE_KEY,
+        "Agent 续写改编",
+        "续写改编 Plan temperature",
+        "控制续写改编执行计划的发散度；默认 0.7，偏向稳定、可执行的章节选择。",
+        "0.7",
     ),
 )
 

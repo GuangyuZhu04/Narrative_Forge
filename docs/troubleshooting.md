@@ -84,7 +84,9 @@ self.default_params = config.get("default_params", {})
 mkdir -p data
 
 # 2. 检查 .env 里的 DATABASE_URL
-# 开发环境相对路径示例：
+# Windows 路径示例（注意用正斜杠或转义反斜杠）：
+DATABASE_URL=sqlite+aiosqlite:///C:/D_disk/Github/Novel_Writing_Agent/data/novel_agent.db
+# Linux/macOS 路径示例：
 DATABASE_URL=sqlite+aiosqlite:///./data/novel_agent.db
 
 # 3. 确认当前用户对 data/ 有写权限
@@ -129,8 +131,9 @@ ls -ld data/
 **诊断**：
 
 ```bash
-# 调用 LLM 配置测试端点，确认模型连接是否正常
-curl -X POST http://localhost:8000/api/v1/llm-configs/<id>/test
+# 跑这个看 LLM 实际返回了什么
+cd backend
+python test_import.py
 ```
 
 **常见原因 & 修法**：
@@ -307,6 +310,9 @@ sqlite3 data/novel_agent.db
 sqlite> .tables
 sqlite> .schema llm_configs
 sqlite> SELECT id, provider, base_url, model_name, default_params, rate_limit FROM llm_configs;
+
+# 手动测一个 LLM 配置
+cd backend && python test_import.py
 
 # 看 LLM 是否真能调通
 curl -X POST http://localhost:5173/api/v1/llm-configs -H "Content-Type: application/json" -d '{

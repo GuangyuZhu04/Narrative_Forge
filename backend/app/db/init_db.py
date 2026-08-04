@@ -6,6 +6,8 @@ from app.models.chapter import Chapter, ChapterVersion
 from app.models.llm_config import LLMConfig
 from app.models.analysis import AnalysisReport
 from app.models.system_prompt_setting import SystemPromptSetting
+from app.models.audiobook import AudiobookConfig, AudiobookJob
+from app.models.agent_session import NovelAgentSession
 
 __all__ = [
     "Base",
@@ -19,4 +21,7 @@ __all__ = [
     "LLMConfig",
     "AnalysisReport",
     "SystemPromptSetting",
+    "AudiobookConfig",
+    "AudiobookJob",
+    "NovelAgentSession",
 ]

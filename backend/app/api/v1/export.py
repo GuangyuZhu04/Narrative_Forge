@@ -7,7 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, verify_project_access
 from app.models.project import Project
 from app.services.export_service import export_service
-from app.schemas.export import ExportRequest
+from app.schemas.export import (
+    ExportRequest,
+    PlatformExportRequest,
+    PlatformExportResponse,
+)
 from app.core.exceptions import ProjectNotFoundException
 
 router = APIRouter()
@@ -32,3 +36,15 @@ async def export_project(
         "Content-Type": content_type,
     }
     return Response(content=content, headers=headers)
+
+
+@router.post("/platform", response_model=PlatformExportResponse)
+async def export_to_platform(
+    project_id: str,
+    data: PlatformExportRequest,
+    db: AsyncSession = Depends(get_db),
+    project: Project = Depends(verify_project_access),
+):
+    return await export_service.export_platform(
+        db, project_id, data.platform, data.options
+    )

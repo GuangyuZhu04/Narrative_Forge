@@ -10,6 +10,7 @@ class Project(UUIDMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
     genre: Mapped[str | None] = mapped_column(String(100))
+    cover_url: Mapped[str | None] = mapped_column(String(500))
     status: Mapped[str] = mapped_column(String(20), default="draft")
     word_count_target: Mapped[int | None] = mapped_column()
     settings: Mapped[str | None] = mapped_column(Text)
@@ -33,4 +34,18 @@ class Project(UUIDMixin, TimestampMixin, Base):
         "NovelDiscussionSession",
         back_populates="project",
         cascade="all, delete-orphan",
+    )
+    agent_sessions = relationship(
+        "NovelAgentSession",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    audiobook_config = relationship(
+        "AudiobookConfig",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    audiobook_jobs = relationship(
+        "AudiobookJob", back_populates="project", cascade="all, delete-orphan"
     )

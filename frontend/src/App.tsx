@@ -7,10 +7,13 @@ import { CharacterManager } from '@/modules/character/CharacterManager'
 import { SceneManager } from '@/modules/scene/SceneManager'
 import { ChapterEditor } from '@/modules/chapter/ChapterEditor'
 import { NovelContent } from '@/modules/novel/NovelContent'
+import { NovelAgent } from '@/modules/agent/NovelAgent'
+import { AgentContinue } from '@/modules/agent/AgentContinue'
 import { NovelDiscussion } from '@/modules/discussion/NovelDiscussion'
 import { ConsistencyReport } from '@/modules/consistency/ConsistencyReport'
 import { LLMConfigPanel } from '@/modules/llm-config/LLMConfigPanel'
 import { ExportPanel } from '@/modules/export/ExportPanel'
+import { AudiobookPanel } from '@/modules/audiobook/AudiobookPanel'
 
 const App: React.FC = () => {
   return (
@@ -21,10 +24,13 @@ const App: React.FC = () => {
           <Route path="outline" element={<OutlineEditor />} />
           <Route path="characters" element={<CharacterManager />} />
           <Route path="scenes" element={<SceneManager />} />
+          <Route path="agent" element={<NovelAgent />} />
+          <Route path="agent-continue" element={<AgentContinue />} />
           <Route path="chapters/:chapterId" element={<ChapterEditor />} />
           <Route path="novel" element={<NovelContent />} />
           <Route path="discussion" element={<NovelDiscussion />} />
           <Route path="consistency" element={<ConsistencyReport />} />
+          <Route path="audiobook" element={<AudiobookPanel />} />
           <Route path="export" element={<ExportPanel />} />
         </Route>
         <Route path="/settings" element={<LLMConfigPanel />} />

@@ -11,7 +11,7 @@ class Character(UUIDMixin, TimestampMixin, Base):
         ForeignKey("projects.id", ondelete="CASCADE")
     )
     name: Mapped[str] = mapped_column(String(100))
-    aliases: Mapped[dict | None] = mapped_column(JSON, default=list)
+    aliases: Mapped[list[str] | None] = mapped_column(JSON, default=list)
     avatar_url: Mapped[str | None] = mapped_column(String(500))
     basic_info: Mapped[dict | None] = mapped_column(JSON)
     personality: Mapped[dict | None] = mapped_column(JSON)

@@ -70,6 +70,27 @@ async def create_project_outline(client):
 
 
 @pytest.mark.anyio
+async def test_outline_tree_cannot_be_loaded_from_another_project(client):
+    first_project_id, outline_id = await create_project_outline(client)
+    second_project_response = await client.post(
+        "/api/v1/projects",
+        json={"name": "empty project"},
+    )
+    assert second_project_response.status_code == 201
+    second_project_id = second_project_response.json()["id"]
+
+    own_tree_response = await client.get(
+        f"/api/v1/projects/{first_project_id}/outlines/{outline_id}/tree"
+    )
+    assert own_tree_response.status_code == 200
+
+    cross_project_response = await client.get(
+        f"/api/v1/projects/{second_project_id}/outlines/{outline_id}/tree"
+    )
+    assert cross_project_response.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_update_outline_node_returns_serializable_metadata(client):
     project_id, outline_id = await create_project_outline(client)
 
@@ -274,6 +295,90 @@ async def test_outline_ai_json_mode_kwargs(client, monkeypatch):
         captured_kwargs[1]["max_tokens"]
         == outline_module.OUTLINE_EXPAND_MAX_TOKENS
     )
+
+
+@pytest.mark.anyio
+async def test_structure_outline_creates_volume_chapter_tree(client, monkeypatch):
+    project_id, outline_id = await create_project_outline(client)
+    captured = {"kwargs": None, "prompt": ""}
+
+    async def fake_chat(config_id, messages, **kwargs):
+        captured["config_id"] = config_id
+        captured["kwargs"] = kwargs
+        captured["prompt"] = messages[-1]["content"]
+        return json.dumps(
+            {
+                "children": [
+                    {
+                        "node_type": "VOLUME",
+                        "title": "第一卷",
+                        "summary": "第一卷概要",
+                        "metadata": {"goal": "开局"},
+                        "children": [
+                            {
+                                "node_type": "CHAPTER",
+                                "title": "第一章",
+                                "summary": "第一章概要",
+                                "metadata": {},
+                            }
+                        ],
+                    },
+                    {
+                        "node_type": "VOLUME",
+                        "title": "第二卷",
+                        "summary": "第二卷概要",
+                        "metadata": {"goal": "升级"},
+                        "children": [
+                            {
+                                "node_type": "CHAPTER",
+                                "title": "第二章",
+                                "summary": "第二章概要",
+                                "metadata": {},
+                            }
+                        ],
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(outline_module.llm_orchestrator, "chat", fake_chat)
+
+    structure_response = await client.post(
+        f"/api/v1/projects/{project_id}/outlines/{outline_id}/structure",
+        json={
+            "llm_config_id": "test-config",
+            "params": {
+                "volume_count": 2,
+                "chapters_per_volume": 1,
+                "requirements": "每卷结尾留下悬念",
+            },
+        },
+    )
+
+    assert structure_response.status_code == 201
+    data = structure_response.json()["data"]
+    assert [node["title"] for node in data] == [
+        "第一卷",
+        "第一章",
+        "第二卷",
+        "第二章",
+    ]
+    assert data[1]["parent_id"] == data[0]["id"]
+    assert data[3]["parent_id"] == data[2]["id"]
+    assert captured["config_id"] == "test-config"
+    assert captured["kwargs"]["response_format"] == DEEPSEEK_JSON_OBJECT_RESPONSE_FORMAT
+    assert "目标卷数：2" in captured["prompt"]
+    assert "每卷目标章节数：1" in captured["prompt"]
+
+    tree_response = await client.get(
+        f"/api/v1/projects/{project_id}/outlines/{outline_id}/tree"
+    )
+    assert tree_response.status_code == 200
+    tree = tree_response.json()["tree"]
+    assert [node["title"] for node in tree] == ["第一卷", "第二卷"]
+    assert [node["sort_order"] for node in tree] == [0, 1]
+    assert tree[0]["children"][0]["title"] == "第一章"
 
 
 @pytest.mark.anyio

@@ -740,7 +740,7 @@ class Exporter(ABC):
 ## 10. 项目目录结构
 
 ```
-narrative-forge/
+Novel_Writing_Agent/
 ├── docs/                          # 项目文档
 │   ├── architecture.md            # 架构设计文档（本文件）
 │   ├── api.md                     # REST API 端点详细参考
@@ -794,9 +794,11 @@ narrative-forge/
 │   │   ├── db/                    # session / init_db
 │   │   └── main.py                # FastAPI 入口 + 路由注册
 │   ├── tests/test_api.py          # 基础集成测试
+│   ├── test_import.py             # 手动测试 LLM 调用的脚本
 │   ├── pyproject.toml
-│   ├── .env.example               # 环境变量示例；本地 .env 不提交
-│   └── data/.gitkeep              # 空数据目录占位；数据库和上传文件不提交
-├── OPEN_SOURCE.md
+│   └── .env                       # 含 SECRET_KEY / DATABASE_URL
+├── data/                          # SQLite 数据库（生产应换 PostgreSQL；务必 gitignore）
+│   └── novel_agent.db
+├── .env.example
 └── README.md
 ```

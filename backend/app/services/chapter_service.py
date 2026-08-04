@@ -70,6 +70,7 @@ PREVIOUS_CONTEXT_SUMMARY_TOTAL_LIMIT = 30000
 PREVIOUS_CHAPTER_CONTENT_LIMIT = 6000
 NOVEL_WRITE_CONTINUATION_CONTEXT_LIMIT = 12000
 NOVEL_WRITE_MAX_TOKENS = 8192*2
+POLISH_ADJACENT_CHAPTER_CONTENT_LIMIT = 4000
 
 
 class ChapterService:
@@ -878,6 +879,96 @@ class ChapterService:
             },
         ]
 
+    async def build_novel_polish_source_content(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        chapter: Chapter,
+        source_content: str,
+        include_previous_chapter: bool = False,
+        include_next_chapter: bool = False,
+    ) -> str:
+        source_content = source_content.strip()
+        context_parts = []
+        if include_previous_chapter:
+            previous_chapter = await self._get_adjacent_chapter(
+                db, project_id, chapter, "previous"
+            )
+            if previous_chapter:
+                context_parts.append(
+                    self._format_polish_adjacent_chapter(
+                        "前一章节", previous_chapter
+                    )
+                )
+
+        if include_next_chapter:
+            next_chapter = await self._get_adjacent_chapter(
+                db, project_id, chapter, "next"
+            )
+            if next_chapter:
+                context_parts.append(
+                    self._format_polish_adjacent_chapter(
+                        "后一章节", next_chapter
+                    )
+                )
+
+        if not context_parts:
+            return source_content
+
+        context_text = "\n\n".join(context_parts)
+        return (
+            "【打磨参考上下文】\n"
+            "以下相邻章节仅用于帮助保持剧情衔接、人物动机和信息一致性，不要改写这些章节。\n\n"
+            f"{context_text}\n\n"
+            "【需要打磨的当前章节正文】\n"
+            f"{source_content}"
+        )
+
+    async def _get_adjacent_chapter(
+        self,
+        db: AsyncSession,
+        project_id: str,
+        chapter: Chapter,
+        direction: str,
+    ) -> Chapter | None:
+        if direction == "previous":
+            result = await db.execute(
+                select(Chapter)
+                .where(
+                    Chapter.project_id == project_id,
+                    Chapter.sort_order < chapter.sort_order,
+                )
+                .order_by(Chapter.sort_order.desc(), Chapter.created_at.desc())
+                .limit(1)
+            )
+        else:
+            result = await db.execute(
+                select(Chapter)
+                .where(
+                    Chapter.project_id == project_id,
+                    Chapter.sort_order > chapter.sort_order,
+                )
+                .order_by(Chapter.sort_order.asc(), Chapter.created_at.asc())
+                .limit(1)
+            )
+        return result.scalar_one_or_none()
+
+    def _format_polish_adjacent_chapter(
+        self,
+        label: str,
+        chapter: Chapter,
+    ) -> str:
+        parts = [
+            f"【{label}】",
+            f"标题：{chapter.title or '未命名章节'}",
+            f"章节摘要：{(chapter.summary or '').strip() or '暂无摘要'}",
+        ]
+        content = self._clip_text(
+            chapter.content or "", POLISH_ADJACENT_CHAPTER_CONTENT_LIMIT
+        )
+        parts.append(f"章节正文摘录：\n{content or '暂无正文'}")
+        return "\n".join(parts)
+
     async def novel_polish(
         self,
         db: AsyncSession,
@@ -886,6 +977,9 @@ class ChapterService:
         chapter_id: str,
         polish_suggestions: str,
         chapter_content: str | None = None,
+        include_previous_chapter: bool = False,
+        include_next_chapter: bool = False,
+        max_tokens: int | None = None,
     ) -> dict | None:
         chapter = await db.get(Chapter, chapter_id)
         if not chapter or chapter.project_id != project_id:
@@ -894,6 +988,14 @@ class ChapterService:
         source_content = (
             chapter_content if chapter_content is not None else chapter.content or ""
         ).strip()
+        source_content = await self.build_novel_polish_source_content(
+            db,
+            project_id,
+            chapter,
+            source_content,
+            include_previous_chapter,
+            include_next_chapter,
+        )
         prompt_values = await self.get_novel_polish_prompt_values(db)
         default_suggestions = prompt_values[NOVEL_POLISH_DEFAULT_SUGGESTIONS_KEY]
         messages = self.build_novel_polish_messages(
@@ -907,7 +1009,7 @@ class ChapterService:
             temperature=await system_prompt_service.get_effective_float(
                 db, NOVEL_POLISH_TEMPERATURE_KEY
             ),
-            max_tokens=NOVEL_WRITE_MAX_TOKENS,
+            max_tokens=max_tokens or NOVEL_WRITE_MAX_TOKENS,
         )
 
         chapter.content = result
@@ -930,6 +1032,7 @@ class ChapterService:
         chapter_id: str,
         style_requirements: str | None = None,
         overrides: NovelWriteContextOverride | None = None,
+        max_tokens: int | None = None,
     ) -> dict:
         chapter = await db.get(Chapter, chapter_id)
         if not chapter:
@@ -944,7 +1047,7 @@ class ChapterService:
             llm_config_id,
             messages,
             temperature=await self.get_novel_write_temperature(db),
-            max_tokens=NOVEL_WRITE_MAX_TOKENS,
+            max_tokens=max_tokens or NOVEL_WRITE_MAX_TOKENS,
         )
 
         chapter.content = result

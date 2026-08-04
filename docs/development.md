@@ -19,7 +19,7 @@
 
 ```bash
 git clone <repo-url>
-cd narrative-forge
+cd Novel_Writing_Agent
 
 # 后端
 cd backend
@@ -290,10 +290,38 @@ messages = [
 
 ### 4.2 测试单个 LLM 配置
 
-先在前端或 API 中创建 LLM 配置，然后调用测试端点：
+`backend/test_import.py` 是个手动脚本：
+
+```python
+import asyncio
+from app.services.llm_orchestrator import llm_orchestrator
+from app.db.session import AsyncSessionLocal
+from app.models.llm_config import LLMConfig
+from sqlalchemy import select
+
+
+async def test():
+    async with AsyncSessionLocal() as db:
+        config = (await db.execute(select(LLMConfig))).scalars().first()
+        if not config:
+            print("No LLM configs found")
+            return
+        print(f"Config ID: {config.id}")
+        response = await llm_orchestrator.chat(
+            config.id,
+            [{"role": "user", "content": "你好"}],
+        )
+        print(f"Response: {response[:500]}")
+
+
+asyncio.run(test())
+```
+
+跑法：
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/llm-configs/<id>/test
+cd backend
+python test_import.py
 ```
 
 ### 4.3 测试 LLM 响应的 JSON 解析

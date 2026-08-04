@@ -49,6 +49,14 @@ narrative-forge/
 
 ## 3. 后端启动
 
+> 下文中的 `cd backend` / `cd frontend` 都以本目录 `narrative-forge` 为起点。如果你当前位于完整仓库 `Novel_Writing_Agent` 根目录，请先执行：
+>
+> ```powershell
+> cd open_source_release/narrative-forge
+> ```
+>
+> 仓库根目录也有一套同名的 `backend` 和 `frontend`，直接从仓库根目录执行 `cd frontend` 会启动另一套前端，其中不包含本开源副本的新功能。
+
 ### 3.1 安装依赖
 
 ```bash
@@ -139,6 +147,8 @@ VITE v8.x.x  ready in xxx ms
 
 > 前端开发服务器已配置代理，所有 `/api` 请求自动转发到后端 `http://localhost:8000`。
 
+进入任意项目后，左侧项目导航应显示「有声书」。如果 5173 端口已被旧前端占用，请先在旧终端按 `Ctrl+C` 停止它，再重新执行本目录下的 `npm run dev`，并在浏览器中强制刷新。
+
 ---
 
 ## 5. 生产构建
@@ -156,8 +166,10 @@ npm run build
 
 ```bash
 cd backend
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
+
+> 有声书后台任务使用进程内执行器。启用有声书生成时请设置 `--workers 1`；未完成任务会在服务重启后从头恢复。
 
 ---
 
@@ -199,8 +211,9 @@ npx tsc --noEmit
 ### 第二步：创建项目
 
 1. 在首页点击「新建项目」
-2. 填写项目名称、体裁、描述
+2. 填写项目名称、体裁、描述，可选择小说封面
 3. 点击「创建」
+4. 在项目卡片中可继续添加、更换或删除封面
 
 ### 第三步：构建大纲
 
@@ -232,7 +245,8 @@ npx tsc --noEmit
    - **扩写**：选中文本后 AI 扩展
    - **摘要**：AI 生成章节摘要
    - **对话**：AI 根据人物信息生成对话
-4. 编辑器支持自动保存（3秒防抖）
+4. 使用「AI 打磨」时可选择加入前一章节或后一章节与摘要作为输入上下文
+5. 编辑器支持自动保存（3秒防抖）
 
 ### 第七步：一致性检查
 
@@ -240,12 +254,30 @@ npx tsc --noEmit
 2. 查看历史分析报告
 3. 报告包含问题列表和修改建议
 
-### 第八步：导出
+### 第八步：生成有声书
+
+1. 点击左侧导航「有声书」；可选择现有 LLM，粘贴语音 API 文档并自动生成接入设置
+2. 也可手动选择 MiniMax 异步多角色、OpenAI 兼容/vLLM、通用 HTTP/WebSocket API 或 ComfyUI 工作流
+3. 单独粘贴语音 API Key 并保存 TTS 配置；设置各人物音色后，点击「人物声音保存」单独保存映射
+4. 选择语音脚本 LLM 以及全书、卷或章节范围，一键生成合并 MP3 与单章 MP3
+
+MiniMax 异步多角色模式会为每个连续同音色片段创建独立任务。系统设置中的 FFmpeg 高质量拼接默认开启，用于统一响度、插入切换停顿并按序编码；也可关闭该选项，改为直接生成并自动拼接多个 MP3，此时无需安装 FFmpeg。
+
+每章在调用 TTS 前会先交给所选 LLM，生成经过人物 ID、内容覆盖度和结构校验的语音脚本 JSON；后端再补全旁白/人物 `voice_id` 并构造语音模型请求。语音脚本随任务持久化，任务恢复时不会无故重复调用 LLM。
+
+使用 DeepSeek V4 生成语音脚本时，请求会按官方当前最大输出长度将 `max_tokens` 提高到 384K，避免项目 LLM 配置中的较小默认值导致 `finish_reason=length`。
+
+MiniMax 音色库通过官方接口查询和删除音色，删除后会立即重新拉取远端列表。刚设计但尚未正式调用的音色会保留本地记录，刷新页面后仍可管理；对于查询不到但 ID 已占用的历史音色，也可按 `voice_id` 手工删除。MiniMax 不允许再次使用已删除的 `voice_id`，系统会记录这类 ID 并在创建前提示换用新 ID。
+
+具体服务协议、ComfyUI 占位符和对白识别规则见 [`docs/audiobook.md`](docs/audiobook.md)。
+
+### 第九步：导出
 
 1. 点击左侧导航「导出」
 2. 选择导出格式（Markdown / TXT / DOCX）
 3. 勾选是否包含大纲和人物档案
 4. 点击「导出」下载文件
+5. 点击「一键导出到番茄」或「一键导出到起点」可复制平台投稿文本并打开作者后台
 
 ---
 
@@ -259,6 +291,8 @@ npx tsc --noEmit
 | 项目 | POST | `/api/v1/projects` | 创建项目 |
 | 项目 | GET | `/api/v1/projects/{id}` | 获取项目详情 |
 | 项目 | PUT | `/api/v1/projects/{id}` | 更新项目 |
+| 项目 | PUT | `/api/v1/projects/{id}/cover` | 上传或更换项目封面 |
+| 项目 | DELETE | `/api/v1/projects/{id}/cover` | 删除项目封面 |
 | 项目 | DELETE | `/api/v1/projects/{id}` | 删除项目（级联） |
 | 大纲 | GET | `/api/v1/projects/{pid}/outlines` | 获取项目大纲列表 |
 | 大纲 | POST | `/api/v1/projects/{pid}/outlines` | 创建大纲 |
@@ -285,6 +319,15 @@ npx tsc --noEmit
 | 章节 | POST | `/api/v1/projects/{pid}/chapters/{id}/ai-stream` | AI 流式辅助（SSE） |
 | 章节 | POST | `/api/v1/projects/{pid}/chapters/{id}/novel-write` | 一键整本写（同步） |
 | 章节 | POST | `/api/v1/projects/{pid}/chapters/{id}/novel-write-stream` | 一键整本写（流式 SSE） |
+| 章节 | POST | `/api/v1/projects/{pid}/chapters/{id}/novel-polish` | AI 打磨章节（可带前/后章上下文） |
+| 章节 | POST | `/api/v1/projects/{pid}/chapters/{id}/novel-polish-stream` | AI 流式打磨章节（SSE） |
+| Agent | POST | `/api/v1/projects/{pid}/novel-agent/write` | 从想法生成项目蓝图、人物、场景、章节并自动写作正文 |
+| Agent | POST | `/api/v1/projects/{pid}/novel-agent/write-stream` | 生成 Agent 蓝图并等待用户确认，不修改项目内容 |
+| Agent | POST | `/api/v1/projects/{pid}/novel-agent/write-execute-stream` | 用户确认后执行 Agent 蓝图 |
+| Agent | POST | `/api/v1/projects/{pid}/novel-agent/continue-stream` | 生成续写改编 Plan 并等待用户确认，不修改章节 |
+| Agent | POST | `/api/v1/projects/{pid}/novel-agent/continue-execute-stream` | 用户确认后执行续写与打磨 Plan |
+| Agent | GET / POST | `/api/v1/projects/{pid}/novel-agent/sessions` | 查询或新建 Agent Session |
+| Agent | GET / PUT / DELETE | `/api/v1/projects/{pid}/novel-agent/sessions/{sid}` | 读取、重命名或删除 Agent Session |
 | 章节 | GET | `/api/v1/projects/{pid}/chapters/{id}/versions` | 获取版本列表 |
 | 章节 | POST | `/api/v1/projects/{pid}/chapters/{id}/versions` | 创建版本快照 |
 | 章节 | GET | `/api/v1/projects/{pid}/chapters/{id}/versions/compare?v1=&v2=` | 版本对比 |
@@ -292,6 +335,17 @@ npx tsc --noEmit
 | 分析 | POST | `/api/v1/projects/{pid}/analysis/consistency/stream` | 流式一致性分析（SSE） |
 | 分析 | GET | `/api/v1/projects/{pid}/analysis/reports` | 分析报告列表 |
 | 导出 | POST | `/api/v1/projects/{pid}/export` | 导出项目（TXT/Markdown/DOCX） |
+| 导出 | POST | `/api/v1/projects/{pid}/export/platform` | 生成番茄/起点平台导出包 |
+| 有声书 | GET / PUT | `/api/v1/projects/{pid}/audiobook/config` | 读取或保存 TTS/声音配置 |
+| 有声书 | PATCH | `/api/v1/projects/{pid}/audiobook/config/character-voices` | 单独保存人物音色映射 |
+| 有声书 | POST | `/api/v1/projects/{pid}/audiobook/config/parse-docs` | 使用现有 LLM 自动解析语音 API 文档 |
+| 有声书 | POST | `/api/v1/projects/{pid}/audiobook/preview` | 生成声音试听 |
+| 有声书 | POST | `/api/v1/projects/{pid}/audiobook/voices/query` | 查询 MiniMax 可用音色 |
+| 有声书 | POST | `/api/v1/projects/{pid}/audiobook/voices/design` | 设计 MiniMax 音色并生成试听 |
+| 有声书 | POST | `/api/v1/projects/{pid}/audiobook/voices/delete` | 删除 MiniMax 复刻或设计音色 |
+| 有声书 | GET | `/api/v1/projects/{pid}/audiobook/scopes` | 获取全书、卷、章节范围 |
+| 有声书 | GET / POST | `/api/v1/projects/{pid}/audiobook/jobs` | 查询或创建生成任务（创建时需指定语音脚本 `llm_config_id`） |
+| 有声书 | GET | `/api/v1/projects/{pid}/audiobook/jobs/{id}/files/{filename}` | 下载 MP3 |
 | 配置 | GET | `/api/v1/llm-configs` | 获取 LLM 配置列表 |
 | 配置 | POST | `/api/v1/llm-configs` | 创建 LLM 配置 |
 | 配置 | PUT | `/api/v1/llm-configs/{id}` | 更新 LLM 配置 |
@@ -368,3 +422,5 @@ rm data/novel_agent.db
 | `docs/deployment.md` | 部署文档：环境变量、生产配置、安全清单 |
 | `docs/data-model.md` | 数据模型：ER 图、表字段、级联规则、索引 |
 | `docs/troubleshooting.md` | 常见问题与已知 bug 复盘 |
+| `docs/audiobook.md` | 有声书服务接入、ComfyUI 工作流和任务说明 |
+| `docs/novel-agent.md` | Agent 生成、续写改编、Session 持久化和扩展说明 |

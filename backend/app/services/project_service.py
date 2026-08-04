@@ -32,6 +32,7 @@ class ProjectService:
             name=data.name,
             description=data.description,
             genre=data.genre,
+            cover_url=data.cover_url,
             word_count_target=data.word_count_target,
             settings=data.settings,
         )

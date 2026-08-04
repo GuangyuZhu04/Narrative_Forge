@@ -82,6 +82,8 @@ class NovelPolishRequest(BaseModel):
     llm_config_id: str
     polish_suggestions: str
     chapter_content: str | None = None
+    include_previous_chapter: bool = False
+    include_next_chapter: bool = False
 
 
 class VersionCreate(BaseModel):

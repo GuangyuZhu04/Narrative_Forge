@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { llmConfigApi } from '@/services/api'
 import { Button } from '@/components/ui/Button'
@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Select'
 import { SystemPromptSettings } from '@/modules/system-settings/SystemPromptSettings'
+import { AudiobookSystemSettings } from '@/modules/system-settings/AudiobookSystemSettings'
 import {
   Plus,
   Trash2,
@@ -14,6 +15,7 @@ import {
   ArrowLeft,
   Zap,
   SlidersHorizontal,
+  Headphones,
 } from 'lucide-react'
 import type { LLMConfig } from '@/types'
 
@@ -76,7 +78,9 @@ export const LLMConfigPanel: React.FC = () => {
   )
   const [showCreate, setShowCreate] = useState(false)
   const [testing, setTesting] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'llm' | 'prompts'>('llm')
+  const [activeTab, setActiveTab] = useState<'llm' | 'prompts' | 'audiobook'>(
+    'llm'
+  )
   const [newConfig, setNewConfig] = useState({
     provider: 'deepseek',
     api_key: '',
@@ -86,16 +90,24 @@ export const LLMConfigPanel: React.FC = () => {
   const selectedPreset = getProviderPreset(newConfig.provider)
   const modelDatalistId = 'llm-model-presets'
 
-  useEffect(() => {
-    loadConfigs()
-  }, [])
-
-  const loadConfigs = async () => {
+  const loadConfigs = useCallback(async () => {
     const result = (await llmConfigApi.list()) as unknown as {
       data: LLMConfig[]
     }
     setConfigs(result.data || [])
-  }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void llmConfigApi.list().then((result) => {
+      if (cancelled) return
+      const response = result as unknown as { data: LLMConfig[] }
+      setConfigs(response.data || [])
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleCreate = async () => {
     if (!newConfig.api_key.trim()) return
@@ -186,9 +198,18 @@ export const LLMConfigPanel: React.FC = () => {
           >
             <SlidersHorizontal className="mr-1 h-4 w-4" /> 系统 Prompt
           </Button>
+          <Button
+            variant={activeTab === 'audiobook' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setActiveTab('audiobook')}
+          >
+            <Headphones className="mr-1 h-4 w-4" /> 有声书设置
+          </Button>
         </div>
 
-        {activeTab === 'prompts' ? (
+        {activeTab === 'audiobook' ? (
+          <AudiobookSystemSettings />
+        ) : activeTab === 'prompts' ? (
           <SystemPromptSettings />
         ) : configs.length === 0 ? (
           <div className="flex h-full items-center justify-center">

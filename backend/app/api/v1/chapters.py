@@ -216,6 +216,8 @@ async def novel_polish(
         chapter_id,
         data.polish_suggestions,
         data.chapter_content,
+        data.include_previous_chapter,
+        data.include_next_chapter,
     )
     if not result:
         raise ChapterNotFoundException()
@@ -237,6 +239,14 @@ async def novel_polish_stream(
     source_content = (
         data.chapter_content if data.chapter_content is not None else chapter.content or ""
     ).strip()
+    source_content = await chapter_service.build_novel_polish_source_content(
+        db,
+        project_id,
+        chapter,
+        source_content,
+        data.include_previous_chapter,
+        data.include_next_chapter,
+    )
     prompt_values = await chapter_service.get_novel_polish_prompt_values(db)
     default_suggestions = prompt_values[NOVEL_POLISH_DEFAULT_SUGGESTIONS_KEY]
     messages = chapter_service.build_novel_polish_messages(

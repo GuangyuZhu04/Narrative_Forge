@@ -3,6 +3,7 @@ import { outlineApi } from '@/services/api'
 import type { Outline, OutlineNode } from '@/types'
 
 interface OutlineState {
+  projectId: string | null
   outlines: Outline[]
   currentOutline: Outline | null
   currentTree: OutlineNode[]
@@ -36,23 +37,59 @@ interface OutlineState {
   ) => Promise<void>
 }
 
-export const useOutlineStore = create<OutlineState>((set) => ({
+export const useOutlineStore = create<OutlineState>((set, get) => ({
+  projectId: null,
   outlines: [],
   currentOutline: null,
   currentTree: [],
   generating: false,
 
   fetchOutlines: async (projectId) => {
+    set((state) =>
+      state.projectId === projectId
+        ? state
+        : {
+            projectId,
+            outlines: [],
+            currentOutline: null,
+            currentTree: [],
+          }
+    )
+
     const result = (await outlineApi.list(projectId)) as unknown as {
       data: Outline[]
     }
-    set({ outlines: result.data || [] })
+    if (get().projectId !== projectId) return
+
+    const outlines = result.data || []
+    set((state) => {
+      const hasCurrentOutline =
+        !!state.currentOutline &&
+        state.currentOutline.project_id === projectId &&
+        outlines.some((outline) => outline.id === state.currentOutline?.id)
+      return {
+        outlines,
+        ...(hasCurrentOutline ? {} : { currentOutline: null, currentTree: [] }),
+      }
+    })
   },
 
   fetchTree: async (projectId, outlineId) => {
+    const state = get()
+    const outlineBelongsToProject = state.outlines.some(
+      (outline) => outline.id === outlineId && outline.project_id === projectId
+    )
+    if (state.projectId !== projectId || !outlineBelongsToProject) return
+
     const result = (await outlineApi.getTree(projectId, outlineId)) as unknown as {
       outline: Outline
       tree: OutlineNode[]
+    }
+    if (
+      get().projectId !== projectId ||
+      result.outline.project_id !== projectId
+    ) {
+      return
     }
     set({
       currentOutline: result.outline,
@@ -68,10 +105,12 @@ export const useOutlineStore = create<OutlineState>((set) => ({
         llmConfigId,
         params
       )) as unknown as Outline
-      set((s) => ({
-        outlines: [...s.outlines, outline],
-        currentOutline: outline,
-      }))
+      if (get().projectId === projectId && outline.project_id === projectId) {
+        set((s) => ({
+          outlines: [...s.outlines, outline],
+          currentOutline: outline,
+        }))
+      }
       return outline
     } finally {
       set({ generating: false })
@@ -109,3 +148,25 @@ export const useOutlineStore = create<OutlineState>((set) => ({
     await outlineApi.moveNode(projectId, nodeId, newParentId, newOrder)
   },
 }))
+
+export const refreshProjectOutlineData = async (
+  projectId: string,
+  preferredOutlineId?: string
+) => {
+  await useOutlineStore.getState().fetchOutlines(projectId)
+
+  const state = useOutlineStore.getState()
+  if (state.projectId !== projectId) return
+
+  const targetOutlineId =
+    (preferredOutlineId &&
+    state.outlines.some((outline) => outline.id === preferredOutlineId)
+      ? preferredOutlineId
+      : null) ||
+    state.currentOutline?.id ||
+    state.outlines[0]?.id
+
+  if (targetOutlineId) {
+    await state.fetchTree(projectId, targetOutlineId)
+  }
+}

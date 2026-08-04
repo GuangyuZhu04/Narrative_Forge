@@ -100,6 +100,65 @@ def test_deepseek_payload_can_disable_forced_thinking_for_health_check():
     assert "reasoning_effort" not in payload
 
 
+def test_deepseek_v4_flash_uses_responses_api_by_default():
+    provider = DeepSeekProvider({**_config(), "model_name": "deepseek-v4-flash"})
+
+    assert provider._uses_responses_api({}) is True
+
+
+def test_deepseek_v4_pro_keeps_chat_completions_by_default():
+    provider = DeepSeekProvider(_config())
+
+    assert provider._uses_responses_api({}) is False
+
+
+def test_deepseek_responses_payload_converts_messages_and_params():
+    provider = DeepSeekProvider({**_config(), "model_name": "deepseek-v4-flash"})
+
+    payload = provider._build_responses_payload(
+        [
+            {"role": "system", "content": "你是小说编辑"},
+            {"role": "developer", "content": "只输出正文"},
+            {"role": "user", "content": "写一段小说"},
+        ],
+        stream=False,
+        max_tokens=1234,
+        response_format={"type": "json_object"},
+        reasoning_effort="max",
+        api_mode="responses",
+        thinking={"type": "enabled"},
+    )
+
+    assert payload["model"] == "deepseek-v4-flash"
+    assert payload["instructions"] == "你是小说编辑\n\n只输出正文"
+    assert payload["input"] == [{"role": "user", "content": "写一段小说"}]
+    assert payload["stream"] is False
+    assert payload["max_output_tokens"] == 1234
+    assert payload["text"]["format"] == {"type": "json_object"}
+    assert payload["reasoning"] == {"effort": "max"}
+    assert "api_mode" not in payload
+    assert "thinking" not in payload
+
+
+def test_deepseek_extracts_responses_output_text():
+    provider = DeepSeekProvider({**_config(), "model_name": "deepseek-v4-flash"})
+
+    text = provider._extract_response_text(
+        {
+            "output": [
+                {
+                    "content": [
+                        {"type": "output_text", "text": "第一段"},
+                        {"type": "text", "text": "第二段"},
+                    ]
+                }
+            ]
+        }
+    )
+
+    assert text == "第一段第二段"
+
+
 def test_deepseek_stream_timeout_allows_long_thinking_gaps():
     provider = DeepSeekProvider(_config())
 

@@ -891,7 +891,8 @@ POST /api/v1/projects/{project_id}/chapters/{chapter_id}/novel-write
 | 字段 | 类型 | 必填 | 描述 |
 |------|------|------|------|
 | llm_config_id | string (UUID) | 是 | LLM 配置 ID |
-| style_requirements | string | 否 | 风格要求（不传则用默认"细腻、紧凑、具有网文阅读感的叙事风格"） |
+| style_requirements | string | 否 | 风格要求（不传则用系统设置中的题材自适应默认文风） |
+| write_context | object | 否 | 覆盖大纲、人物、场景、前文等 AI 编写上下文 |
 
 **请求示例**：
 
@@ -916,7 +917,7 @@ POST /api/v1/projects/{project_id}/chapters/{chapter_id}/novel-write
 > 3. 上一章节最后 3000 字内容（如有）
 > 4. 用户指定的风格要求
 >
-> 返回的完整内容**不会自动写回 chapter 表**——调用方拿到结果后用 `PUT /chapters/{id}` 自行保存。如需自动保存，请用流式版本（5.9）。
+> 返回的完整内容会自动写回 `chapter.content`，并按中文字符数更新 `word_count`。
 
 ### 5.9 整本小说写作（流式 SSE，自动保存）
 
@@ -939,9 +940,173 @@ event: done
 data: {}
 ```
 
-> 区别于 5.8：路由在 `chapters.py:160` 直接组装上下文 + 流式输出 + 自动 commit，**省去客户端二次调用 PUT**。适合前端"一键整本写"按钮的实场景。
+> 区别于 5.8：流式版本通过 SSE 增量返回正文，并在模型达到输出上限时尝试自动续写补完当前章节。
 
-### 5.10 获取章节版本列表
+### 5.10 Agent 生成：从想法生成长篇项目
+
+```
+POST /api/v1/projects/{project_id}/novel-agent/write
+```
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| session_id | string (UUID) | 否 | 复用当前项目的 `generate` Session；省略时自动创建 |
+| llm_config_id | string (UUID) | 是 | LLM 配置 ID |
+| idea | string | 是 | 作者想法，可只写一句创意 |
+| genre | string | 否 | 题材提示，不填则由 Agent 判断 |
+| style_requirements | string | 否 | 文风要求 |
+| extra_requirements | string | 否 | 额外限制或偏好 |
+| volume_count | integer | 否 | 目标卷数，默认 3 |
+| chapter_count | integer | 否 | 全书所有卷合计的目标总章节数，默认 12；不得少于卷数，各卷章节数可以不同 |
+| word_count_target | integer | 否 | 目标总字数，默认 300000 |
+| write_chapter_count | integer | 否 | 自动生成正文的章节数，默认 3；为 0 时只生成结构 |
+| update_project | boolean | 否 | 是否用 Agent 蓝图更新项目名称、简介、题材等，默认 true |
+| use_deepseek_responses_api | boolean | 否 | DeepSeek 且模型为 `deepseek-v4-flash` 时优先使用 Responses API |
+
+**请求示例**：
+
+```json
+{
+  "llm_config_id": "990e8400-e29b-41d4-a716-446655440099",
+  "idea": "一个女孩继承旧书店，发现每本书都会改写现实中的一段记忆。",
+  "genre": "悬疑",
+  "volume_count": 3,
+  "chapter_count": 12,
+  "write_chapter_count": 3
+}
+```
+
+**响应字段**：
+
+| 字段 | 描述 |
+|------|------|
+| session_id | 等待确认的 Session ID |
+| status | 固定为 `awaiting_confirmation` |
+| plan | LLM 返回的完整蓝图 JSON |
+| steps | 蓝图步骤为 `completed`，其余执行步骤为 `pending` |
+
+> 该接口只生成计划，不修改项目。用户确认后才会按蓝图创建大纲、人物、场景和章节，并复用 `ChapterService.novel_write` 按章节顺序写正文。
+
+#### 流式执行与步骤进度
+
+```
+POST /api/v1/projects/{project_id}/novel-agent/write-stream
+```
+
+请求体与同步接口完全相同，响应类型为 `text/event-stream`。前端应依次处理以下 `type`：
+
+| type | 说明 |
+|------|------|
+| `session` | 返回本次使用的 Session，自动创建时可由此取得 Session ID |
+| `steps` | 初始化蓝图、项目信息、大纲、人物、场景、章节、内容等全部步骤 |
+| `step` | 更新单个步骤的 `pending`、`running`、`completed` 或 `failed` 状态 |
+| `plan` | 返回结构化蓝图 |
+| `confirmation_required` | 蓝图已持久化，Session 状态为 `awaiting_confirmation` |
+| `done` | 流程正常结束 |
+| `error` | 流程失败，错误信息位于 `error` 字段 |
+
+事件示例：
+
+```text
+data: {"type":"plan","plan":{"project":{},"outline":{},"characters":[],"scenes":[]}}
+
+data: {"type":"confirmation_required","session":{"id":"...","status":"awaiting_confirmation"}}
+
+data: {"type":"done"}
+```
+
+确认并执行计划：
+
+```http
+POST /api/v1/projects/{project_id}/novel-agent/write-execute-stream
+Content-Type: application/json
+
+{"session_id":"等待确认的 Session ID"}
+```
+
+确认接口返回 `steps`、`step`、`result`、`done` 或 `error` SSE 事件。只有该接口开始后才会修改项目；同一个计划只能确认一次，重复确认返回 HTTP 409。
+
+### 5.11 Agent Session 管理
+
+Session 用于按项目和 Agent 模式持久化请求、Plan、步骤、结果与错误。支持的模式为 `generate` 和 `continue_edit`。
+
+```http
+GET    /api/v1/projects/{project_id}/novel-agent/sessions?mode=generate
+POST   /api/v1/projects/{project_id}/novel-agent/sessions
+GET    /api/v1/projects/{project_id}/novel-agent/sessions/{session_id}
+PUT    /api/v1/projects/{project_id}/novel-agent/sessions/{session_id}
+DELETE /api/v1/projects/{project_id}/novel-agent/sessions/{session_id}
+```
+
+创建请求：
+
+```json
+{
+  "mode": "continue_edit",
+  "name": null
+}
+```
+
+`name` 为空时默认使用生成后的 Session ID。重命名使用：
+
+```json
+{
+  "name": "第二卷续写与节奏调整"
+}
+```
+
+Session 状态包括 `idle`、`planning`、`awaiting_confirmation`、`running`、`completed`、`failed`。删除 Session 只删除运行记录，不回滚 Agent 已创建或修改的项目内容。
+
+### 5.12 Agent 续写改编
+
+```http
+POST /api/v1/projects/{project_id}/novel-agent/continue-stream
+```
+
+该接口只生成并持久化 Plan，不修改章节。成功后发送 `confirmation_required`，Session 状态变为 `awaiting_confirmation`。
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| session_id | string (UUID) | 否 | 复用当前项目的 `continue_edit` Session；省略时自动创建 |
+| llm_config_id | string (UUID) | 是 | 用于生成 Plan 和执行章节动作的 LLM 配置 |
+| instruction | string | 是 | 续写或改编要求，1～20000 字符 |
+| style_requirements | string | 否 | 全局文风要求 |
+| max_actions | integer | 否 | Plan 最大动作数，默认 10，范围 1～50 |
+
+LLM Plan 仅允许两种动作：`write` 调用现有 `ChapterService.novel_write()`，`polish` 调用现有 `ChapterService.novel_polish()`。Plan 生成前会从数据库同步当前项目设定、完整大纲、人物关系、场景库和章节正文状态。已有章节记录使用真实 UUID；大纲中已有但尚未创建章节记录的 `CHAPTER` 节点使用 `outline-node:<大纲节点 ID>` 临时目标 ID。对“全部/剩余空白章节”或明确空白章节数量的请求，服务会同时检查空正文记录和未实例化的大纲章节，并在 LLM 漏章时自动补齐（仍受 `max_actions` 限制）。计划阶段不会创建缺失的章节记录。
+
+确认并执行 Plan：
+
+```http
+POST /api/v1/projects/{project_id}/novel-agent/continue-execute-stream
+Content-Type: application/json
+
+{"session_id":"等待确认的 Session ID"}
+```
+
+确认后，主 Agent 才会按 Plan 调度。`outline-node:` 临时目标会先实例化为真实章节记录并替换为章节 UUID。每章创建新的无状态章节 Agent 上下文和唯一 `worker_session_id`；每个动作执行前都会自动创建章节版本快照并重新构造最新章节上下文。
+
+执行接口除通用的 `session`、`steps`、`step`、`result`、`done`、`error` 外，还发送：
+
+| type | 说明 |
+|------|------|
+| `action_result` | 一个章节动作完成后的结果，包含动作类型、章节、字数、内容、备份版本 ID 和 `worker_session_id` |
+
+最终结果示例：
+
+```text
+data: {"type":"result","result":{"session_id":"...","summary":"续写两章并调整前章节奏","actions":[{"index":1,"action":"write","chapter_id":"...","chapter_title":"第十章","status":"completed","word_count":3200,"backup_version_id":"...","worker_session_id":"..."}]}}
+
+data: {"type":"done"}
+```
+
+执行中失败时，Session 状态为 `failed`，已完成动作会作为部分结果保留；已写入章节的内容不会自动回滚。
+
+### 5.13 获取章节版本列表
 
 ```
 GET /api/v1/projects/{project_id}/chapters/{chapter_id}/versions
@@ -972,7 +1137,7 @@ GET /api/v1/projects/{project_id}/chapters/{chapter_id}/versions
 }
 ```
 
-### 5.11 创建版本快照
+### 5.14 创建版本快照
 
 ```
 POST /api/v1/projects/{project_id}/chapters/{chapter_id}/versions
@@ -986,7 +1151,7 @@ POST /api/v1/projects/{project_id}/chapters/{chapter_id}/versions
 
 **响应**（201 Created）：返回版本详情对象。
 
-### 5.12 版本对比
+### 5.15 版本对比
 
 ```
 GET /api/v1/projects/{project_id}/chapters/{chapter_id}/versions/compare?v1={v1}&v2={v2}
@@ -1301,7 +1466,7 @@ POST /api/v1/llm-configs
 |------|------|------|--------|------|
 | temperature | float | 0.0-2.0 | 0.7 | 生成温度 |
 | top_p | float | 0.0-1.0 | 0.9 | Top-P 采样 |
-| max_tokens | integer | 1-65536 | 4096 | 最大输出 Token |
+| max_tokens | integer | 1 到模型上限 | 4096 | 最大输出 Token；DeepSeek V4 官方上限为 393216，Agent 请求会自动使用该上限 |
 | frequency_penalty | float | -2.0-2.0 | 0.0 | 频率惩罚 |
 | presence_penalty | float | -2.0-2.0 | 0.0 | 存在惩罚 |
 
@@ -1318,7 +1483,7 @@ POST /api/v1/llm-configs
 ```json
 {
   "provider": "deepseek",
-  "api_key": "YOUR_API_KEY",
+  "api_key": "sk-xxxxxxxxxxxxxxxxxxxxxxxx",
   "base_url": "https://api.deepseek.com",
   "model_name": "deepseek-v4-pro",
   "default_params": {
@@ -1457,7 +1622,7 @@ curl -X POST http://localhost:8000/api/v1/llm-configs \
   -H "Content-Type: application/json" \
   -d '{
     "provider": "deepseek",
-    "api_key": "YOUR_API_KEY",
+    "api_key": "sk-your-api-key",
     "base_url": "https://api.deepseek.com",
     "model_name": "deepseek-v4-pro",
     "default_params": {"temperature": 0.7, "top_p": 0.9, "max_tokens": 4096},

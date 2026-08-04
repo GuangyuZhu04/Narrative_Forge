@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   characterApi,
   chapterApi,
@@ -17,20 +17,24 @@ import {
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
+import { useAgentInputDraftStore } from '@/stores/agentInputDraftStore'
 import {
   BookOpen,
   ChevronDown,
   ChevronUp,
   FilePlus2,
+  FilePenLine,
   FileText,
   Import,
   Layers,
   ListTree,
   Loader2,
+  Menu,
   MessageSquare,
   PencilLine,
   Plus,
   Send,
+  Sparkles,
   Trash2,
   Users,
 } from 'lucide-react'
@@ -45,7 +49,14 @@ import type {
 } from '@/types'
 
 type ToastType = 'success' | 'error'
-type ImportTarget = 'chapter_content' | 'characters' | 'outline_volume' | 'outline_chapter'
+type ImportTarget =
+  | 'chapter_content'
+  | 'characters'
+  | 'outline'
+  | 'outline_volume'
+  | 'outline_chapter'
+  | 'agent_generate'
+  | 'agent_continue'
 type ContextSource =
   | 'novel_content'
   | 'characters'
@@ -72,6 +83,12 @@ const getApiErrorDetail = (error: unknown, fallback: string) => {
 }
 
 const getMessageRoleLabel = (role: string) => (role === 'user' ? '我' : 'AI')
+
+const getMessageSnippet = (message: DiscussionMessage) => {
+  const content = message.content.replace(/\s+/g, ' ').trim()
+  const fallback = message.role === 'assistant' ? 'AI 正在回复...' : '空消息'
+  return `${getMessageRoleLabel(message.role)}：${content || fallback}`
+}
 
 const makeDefaultTitle = (text: string) => {
   const firstLine = text
@@ -350,8 +367,74 @@ const DiscussionMessageBubble: React.FC<DiscussionMessageBubbleProps> = ({
   )
 }
 
+interface DiscussionMessageIndexSidebarProps {
+  messages: DiscussionMessage[]
+  onJump: (messageId: string) => void
+}
+
+const DiscussionMessageIndexSidebar: React.FC<
+  DiscussionMessageIndexSidebarProps
+> = ({ messages, onJump }) => {
+  if (messages.length === 0) return null
+
+  return (
+    <div className="group absolute bottom-3 right-3 top-3 z-20 flex w-12 max-w-[calc(100vw-2rem)] justify-end overflow-visible transition-[width] duration-200 hover:w-96 focus-within:w-96">
+      <div className="flex h-full w-full overflow-hidden rounded-lg border border-gray-200 bg-white/95 shadow-lg backdrop-blur">
+        <div className="flex w-12 shrink-0 flex-col items-center border-r border-gray-100 py-3">
+          <button
+            type="button"
+            className="flex h-9 w-9 items-center justify-center rounded-md text-gray-600 transition-colors hover:bg-blue-50 hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-label="讨论消息导航"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <div className="mt-3 flex min-h-0 flex-1 flex-col gap-1 overflow-hidden">
+            {messages.slice(0, 18).map((message) => (
+              <span
+                key={message.id}
+                aria-hidden="true"
+                className={`h-1.5 w-5 rounded-full ${
+                  message.role === 'user' ? 'bg-blue-500' : 'bg-emerald-500'
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="min-w-0 flex-1 overflow-hidden opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+          <div className="h-full overflow-auto p-2">
+            {messages.map((message) => {
+              const snippet = getMessageSnippet(message)
+              return (
+                <button
+                  key={message.id}
+                  type="button"
+                  className="flex h-9 w-full min-w-0 items-center rounded-md px-3 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  title={snippet}
+                  onClick={() => onJump(message.id)}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`mr-2 h-2 w-2 shrink-0 rounded-full ${
+                      message.role === 'user' ? 'bg-blue-500' : 'bg-emerald-500'
+                    }`}
+                  />
+                  <span className="truncate">{snippet}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export const NovelDiscussion: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>()
+  const navigate = useNavigate()
+  const publishAgentDraft = useAgentInputDraftStore(
+    (state) => state.publishDraft
+  )
   const [sessions, setSessions] = useState<DiscussionSession[]>([])
   const [activeSession, setActiveSession] =
     useState<DiscussionSessionDetail | null>(null)
@@ -388,8 +471,12 @@ export const NovelDiscussion: React.FC = () => {
   const [characters, setCharacters] = useState<Character[]>([])
   const [selectedOutlineChapterId, setSelectedOutlineChapterId] = useState('')
   const [loadingContextSources, setLoadingContextSources] = useState(false)
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(
+    null
+  )
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const activeSessionIdRef = useRef<string | null>(null)
   const scrollPositionsRef = useRef<Record<string, number>>({})
 
@@ -421,6 +508,18 @@ export const NovelDiscussion: React.FC = () => {
     const element = scrollRef.current
     if (!sessionId || !element) return
     scrollPositionsRef.current[sessionId] = element.scrollTop
+  }, [])
+
+  const jumpToMessage = useCallback((messageId: string) => {
+    const target = messageRefs.current[messageId]
+    if (!target) return
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setHighlightedMessageId(messageId)
+    window.setTimeout(() => {
+      setHighlightedMessageId((current) =>
+        current === messageId ? null : current
+      )
+    }, 1400)
   }, [])
 
   const loadSessionDetail = useCallback(
@@ -996,6 +1095,26 @@ export const NovelDiscussion: React.FC = () => {
     if (!projectId || !importText.trim()) return
     setImporting(true)
     try {
+      if (
+        importTarget === 'agent_generate' ||
+        importTarget === 'agent_continue'
+      ) {
+        const target =
+          importTarget === 'agent_generate' ? 'generate' : 'continue_edit'
+        publishAgentDraft({
+          projectId,
+          target,
+          content: importText.trim(),
+          sourceTitle: importTitle.trim() || '来自小说讨论',
+        })
+        setShowImportDialog(false)
+        navigate(
+          `/projects/${projectId}/${
+            target === 'generate' ? 'agent' : 'agent-continue'
+          }`
+        )
+        return
+      }
       if (importTarget === 'chapter_content') {
         if (!selectedChapterId) {
           showToast('error', '请选择章节')
@@ -1026,6 +1145,12 @@ export const NovelDiscussion: React.FC = () => {
           importText
         )) as unknown as { count: number }
         showToast('success', `已导出 ${result.count || 0} 个人物`)
+      } else if (importTarget === 'outline') {
+        await outlineApi.create(projectId, {
+          title: importTitle.trim() || '来自小说讨论的大纲',
+          description: importText,
+        })
+        showToast('success', '已导出到大纲')
       } else if (importTarget === 'outline_volume') {
         if (!selectedOutlineId) {
           showToast('error', '请选择大纲')
@@ -1201,40 +1326,59 @@ export const NovelDiscussion: React.FC = () => {
               </div>
             </div>
 
-            <div
-              ref={scrollRef}
-              className="flex-1 overflow-auto p-6"
-              onScroll={saveCurrentScrollPosition}
-            >
-              {loadingDetail ? (
-                <div className="flex h-full items-center justify-center text-gray-400">
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  加载讨论中...
-                </div>
-              ) : activeSession.messages.length === 0 ? (
-                <div className="flex h-full items-center justify-center">
-                  <div className="text-center text-gray-400">
-                    <MessageSquare className="mx-auto mb-3 h-12 w-12" />
-                    <p>开始和 AI 讨论你的小说构思</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="mx-auto max-w-4xl space-y-4">
-                  {activeSession.messages.map((message) => (
-                    <DiscussionMessageBubble
-                      key={message.id}
-                      message={message}
-                      onExport={openImportDialog}
-                    />
-                  ))}
-                  {sending && (
-                    <div className="flex items-center gap-2 text-sm text-gray-400">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      AI 正在回复...
-                    </div>
-                  )}
-                </div>
+            <div className="relative min-h-0 flex-1">
+              {!loadingDetail && activeSession.messages.length > 0 && (
+                <DiscussionMessageIndexSidebar
+                  messages={activeSession.messages}
+                  onJump={jumpToMessage}
+                />
               )}
+              <div
+                ref={scrollRef}
+                className="h-full overflow-auto p-6 pr-20"
+                onScroll={saveCurrentScrollPosition}
+              >
+                {loadingDetail ? (
+                  <div className="flex h-full items-center justify-center text-gray-400">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    加载讨论中...
+                  </div>
+                ) : activeSession.messages.length === 0 ? (
+                  <div className="flex h-full items-center justify-center">
+                    <div className="text-center text-gray-400">
+                      <MessageSquare className="mx-auto mb-3 h-12 w-12" />
+                      <p>开始和 AI 讨论你的小说构思</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mx-auto max-w-4xl space-y-4">
+                    {activeSession.messages.map((message) => (
+                      <div
+                        key={message.id}
+                        ref={(element) => {
+                          messageRefs.current[message.id] = element
+                        }}
+                        className={`rounded-xl transition-shadow duration-300 ${
+                          highlightedMessageId === message.id
+                            ? 'shadow-[0_0_0_3px_rgba(37,99,235,0.28)]'
+                            : ''
+                        }`}
+                      >
+                        <DiscussionMessageBubble
+                          message={message}
+                          onExport={openImportDialog}
+                        />
+                      </div>
+                    ))}
+                    {sending && (
+                      <div className="flex items-center gap-2 text-sm text-gray-400">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        AI 正在回复...
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="border-t bg-white p-4">
@@ -1373,6 +1517,18 @@ export const NovelDiscussion: React.FC = () => {
             </button>
             <button
               type="button"
+              onClick={() => setImportTarget('outline')}
+              className={`rounded-md border p-3 text-left text-sm transition-colors ${
+                importTarget === 'outline'
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <FileText className="mb-2 h-4 w-4" />
+              导出到大纲
+            </button>
+            <button
+              type="button"
               onClick={() => setImportTarget('outline_volume')}
               className={`rounded-md border p-3 text-left text-sm transition-colors ${
                 importTarget === 'outline_volume'
@@ -1394,6 +1550,30 @@ export const NovelDiscussion: React.FC = () => {
             >
               <ListTree className="mb-2 h-4 w-4" />
               大纲章节
+            </button>
+            <button
+              type="button"
+              onClick={() => setImportTarget('agent_generate')}
+              className={`rounded-md border p-3 text-left text-sm transition-colors ${
+                importTarget === 'agent_generate'
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <Sparkles className="mb-2 h-4 w-4" />
+              Agent 生成
+            </button>
+            <button
+              type="button"
+              onClick={() => setImportTarget('agent_continue')}
+              className={`rounded-md border p-3 text-left text-sm transition-colors ${
+                importTarget === 'agent_continue'
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <FilePenLine className="mb-2 h-4 w-4" />
+              Agent 续写改编
             </button>
           </div>
 
@@ -1441,6 +1621,14 @@ export const NovelDiscussion: React.FC = () => {
                 </div>
               )}
 
+              {importTarget === 'outline' && (
+                <Input
+                  label="大纲标题"
+                  value={importTitle}
+                  onChange={(e) => setImportTitle(e.target.value)}
+                />
+              )}
+
               {(importTarget === 'outline_volume' ||
                 importTarget === 'outline_chapter') && (
                 <div className="space-y-3">
@@ -1483,6 +1671,17 @@ export const NovelDiscussion: React.FC = () => {
                     value={importTitle}
                     onChange={(e) => setImportTitle(e.target.value)}
                   />
+                </div>
+              )}
+
+              {(importTarget === 'agent_generate' ||
+                importTarget === 'agent_continue') && (
+                <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-sm leading-6 text-blue-700">
+                  导出后将跳转到
+                  {importTarget === 'agent_generate'
+                    ? '“Agent 生成”'
+                    : '“Agent 续写改编”'}
+                  ，并把讨论内容填入主输入框；确认前仍可继续编辑。
                 </div>
               )}
             </>

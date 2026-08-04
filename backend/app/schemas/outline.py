@@ -99,3 +99,8 @@ class OutlineExpandRequest(BaseModel):
 class OutlineOptimizeRequest(BaseModel):
     llm_config_id: str
     direction: str | None = None
+
+
+class OutlineStructureRequest(BaseModel):
+    llm_config_id: str
+    params: dict[str, Any] | None = None

@@ -21,6 +21,8 @@ from app.llm.prompts.outline import (
     OUTLINE_GENERATE_SYSTEM,
     OUTLINE_GENERATE_USER,
     OUTLINE_EXPAND_USER,
+    OUTLINE_STRUCTURE_SYSTEM,
+    OUTLINE_STRUCTURE_USER,
 )
 
 OUTLINE_EXPAND_MAX_TOKENS = 32768
@@ -59,8 +61,18 @@ class OutlineService:
         await db.refresh(outline)
         return outline
 
-    async def get_tree(self, db: AsyncSession, outline_id: str) -> dict | None:
-        outline = await db.get(Outline, outline_id)
+    async def get_tree(
+        self,
+        db: AsyncSession,
+        outline_id: str,
+        project_id: str | None = None,
+    ) -> dict | None:
+        conditions = [Outline.id == outline_id]
+        if project_id is not None:
+            conditions.append(Outline.project_id == project_id)
+        outline = (
+            await db.execute(select(Outline).where(*conditions))
+        ).scalar_one_or_none()
         if not outline:
             return None
         nodes = (
@@ -185,7 +197,8 @@ class OutlineService:
         parent_id: str | None,
         nodes_data: list[dict],
         start_order: int,
-    ):
+    ) -> list[OutlineNode]:
+        created: list[OutlineNode] = []
         for idx, nd in enumerate(nodes_data):
             node = OutlineNode(
                 outline_id=outline_id,
@@ -199,10 +212,14 @@ class OutlineService:
             )
             db.add(node)
             await db.flush()
+            created.append(node)
             if children := nd.get("children"):
-                await self._save_nodes_recursive(
-                    db, outline_id, node.id, children, 0
+                created.extend(
+                    await self._save_nodes_recursive(
+                        db, outline_id, node.id, children, 0
+                    )
                 )
+        return created
 
     async def expand_node(
         self,
@@ -378,6 +395,69 @@ class OutlineService:
             **json_object_response_kwargs(),
         )
         return json.loads(response)
+
+    async def structure_outline(
+        self,
+        db: AsyncSession,
+        llm_config_id: str,
+        outline_id: str,
+        params: dict | None = None,
+    ) -> list[OutlineNode] | None:
+        params = params or {}
+        tree_data = await self.get_tree(db, outline_id)
+        if not tree_data:
+            return None
+
+        outline = tree_data["outline"]
+        outline_context = {
+            "title": outline.title,
+            "description": outline.description,
+            "tree": tree_data["tree"],
+        }
+        volume_count = self._parse_expand_count(params.get("volume_count", 3))
+        chapters_per_volume = self._parse_expand_count(
+            params.get("chapters_per_volume", 10)
+        )
+        messages = [
+            {"role": "system", "content": OUTLINE_STRUCTURE_SYSTEM},
+            {
+                "role": "user",
+                "content": OUTLINE_STRUCTURE_USER.format(
+                    outline_json=json.dumps(
+                        outline_context,
+                        ensure_ascii=False,
+                        indent=2,
+                        default=str,
+                    ),
+                    volume_count=volume_count,
+                    chapters_per_volume=chapters_per_volume,
+                    requirements=params.get("requirements") or "无",
+                ),
+            },
+        ]
+        temperature = await system_prompt_service.get_effective_float(
+            db, OUTLINE_GENERATE_TEMPERATURE_KEY
+        )
+        response = await llm_orchestrator.chat(
+            llm_config_id,
+            messages,
+            temperature=temperature,
+            **json_object_response_kwargs(),
+        )
+        structure_data = json.loads(response)
+        nodes_data = (
+            structure_data
+            if isinstance(structure_data, list)
+            else structure_data.get("children") or []
+        )
+        start_order = await self._get_next_sort_order(db, outline_id, None)
+        created = await self._save_nodes_recursive(
+            db, outline_id, None, nodes_data, start_order
+        )
+        await db.commit()
+        for node in created:
+            await db.refresh(node)
+        return created
 
     async def add_node(
         self, db: AsyncSession, data: OutlineNodeCreate

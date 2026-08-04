@@ -151,6 +151,7 @@ outlines = relationship("Outline", cascade="all, delete-orphan")
 chapters = relationship("Chapter", cascade="all, delete-orphan")
 characters = relationship("Character", cascade="all, delete-orphan")
 analysis_reports = relationship("AnalysisReport", cascade="all, delete-orphan")
+agent_sessions = relationship("NovelAgentSession", cascade="all, delete-orphan")
 ```
 
 **索引**：
@@ -304,12 +305,31 @@ VOLUME (卷)
 
 **版本管理**：
 
-- 用户主动调「保存版本」接口创建快照
-- 不自动保存（避免无限增长）
+- 用户可主动调「保存版本」接口创建快照
+- Agent 续写改编在每个 `write` / `polish` 动作前自动创建快照
 - `version_number` 在 `chapter_id` 内单调递增
 - 删除 chapter 时级联删除所有 version
 
-### 3.8 `analysis_reports` — 一致性分析报告
+### 3.8 `novel_agent_sessions` — Agent 运行会话
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | UUID | 自动 | Session ID；未指定名称时同时作为默认名称 |
+| `project_id` | UUID (FK) | ✓ | 所属项目 |
+| `mode` | VARCHAR(30) | ✓ | `generate` / `continue_edit` |
+| `name` | VARCHAR(200) | ✓ | 可修改的会话显示名称 |
+| `status` | VARCHAR(20) | ✓ | `idle` / `running` / `completed` / `failed` |
+| `request_payload` | JSON | - | 最近一次运行请求 |
+| `plan` | JSON | - | Agent 生成蓝图或续写改编 Plan |
+| `result` | JSON | - | 完整结果或续写失败时的部分动作结果 |
+| `steps` | JSON | - | 最近一次运行结束时的步骤状态 |
+| `error_message` | TEXT | - | 最近一次失败信息 |
+| `created_at` | DateTime | 自动 | - |
+| `updated_at` | DateTime | 自动 | Session 排序和更新时间 |
+
+删除项目时通过 ORM 关系级联删除 Session。删除 Session 本身不会删除已经生成的大纲、人物、场景、章节或章节版本。
+
+### 3.9 `analysis_reports` — 一致性分析报告
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -329,7 +349,7 @@ VOLUME (卷)
 - `issues` / `suggestions` 是 JSON list，**结构由 LLM 决定**
 - 当前实现（`consistency_service.py`）是把多维度结果合并写入一条 report，而不是每个维度一条
 
-### 3.9 `llm_configs` — LLM 配置（全局）
+### 3.10 `llm_configs` — LLM 配置（全局）
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -393,6 +413,8 @@ VOLUME (卷)
 | `chapters` | `(project_id, sort_order)` | 章节排序 |
 | `chapter_versions` | `chapter_id` | 查版本列表 |
 | `chapter_versions` | `(chapter_id, version_number)` UNIQUE | 版本号唯一性 |
+| `novel_agent_sessions` | `project_id` | 查项目下 Agent Session |
+| `novel_agent_sessions` | `mode` | 分离 Agent 生成与续写改编会话 |
 | `analysis_reports` | `project_id` | 查项目报告 |
 | `analysis_reports` | `chapter_id` | 查章节报告 |
 | `llm_configs` | `is_active` | 找激活的配置 |
@@ -431,9 +453,10 @@ async with engine.begin() as conn:
 | 操作 | 影响 |
 |------|------|
 | 创建项目 | 写 `projects` 1 条 |
-| 删除项目 | 删 `projects` 1 条 + 级联删所有 outline/character/chapter/analysis_report |
+| 删除项目 | 删 `projects` 1 条 + 级联删所有 outline/character/chapter/analysis_report/agent_session |
 | 改 LLM 配置 | 原地 UPDATE；`updated_at` 刷新；**provider 缓存可能不刷新**（见 troubleshooting #9） |
 | 保存章节版本 | 写 `chapter_versions` 1 条；`version_number` = 同 chapter 内 max + 1 |
+| 运行 Agent | 创建或更新 `novel_agent_sessions` 1 条，并保存 Plan、步骤、结果或错误 |
 | 创建分析报告 | 写 `analysis_reports` 1 条（流式接口在流完后写一次） |
 | 一致性分析 | 写 1 条 `analysis_reports`（多维度结果合并） |
 
