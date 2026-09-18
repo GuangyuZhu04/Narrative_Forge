@@ -61,7 +61,7 @@ narrative-forge/
 
 ```bash
 cd backend
-pip install fastapi uvicorn sqlalchemy aiosqlite alembic httpx pydantic pydantic-settings cryptography python-dotenv aiofiles
+pip install fastapi uvicorn sqlalchemy aiosqlite alembic httpx pydantic pydantic-settings cryptography python-dotenv aiofiles websockets
 ```
 
 或使用项目配置安装：
