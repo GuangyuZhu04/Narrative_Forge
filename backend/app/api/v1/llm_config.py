@@ -1,4 +1,7 @@
 import time
+import re
+
+import httpx
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +10,7 @@ from app.api.deps import get_db
 from app.models.llm_config import LLMConfig
 from app.core.security import encrypt_api_key
 from app.llm.providers.openai_compatible import OpenAICompatibleProvider
-from app.services.llm_orchestrator import PROVIDER_MAP
+from app.services.llm_orchestrator import PROVIDER_MAP, llm_orchestrator
 from app.schemas.llm_config import (
     LLMConfigCreate,
     LLMConfigUpdate,
@@ -33,6 +36,26 @@ def _test_connection_kwargs(provider: str) -> dict:
             }
         )
     return kwargs
+
+
+def _safe_connection_error(error: Exception, provider: object) -> str:
+    """Return a useful probe error without exposing credentials or query keys."""
+
+    if isinstance(error, httpx.HTTPStatusError):
+        return f"上游 API 返回 HTTP {error.response.status_code}"
+    if isinstance(error, httpx.RequestError):
+        return "无法连接上游 API"
+    message = str(error) or error.__class__.__name__
+    secret = getattr(provider, "api_key", None)
+    if secret:
+        message = message.replace(str(secret), "****")
+    message = re.sub(r"(?i)([?&]key=)[^&\s]+", r"\1****", message)
+    message = re.sub(
+        r"(?i)(x-goog-api-key|authorization)\s*[:=]\s*[^,;\s]+",
+        r"\1: ****",
+        message,
+    )
+    return message[:500]
 
 
 @router.get("")
@@ -105,6 +128,7 @@ async def update_config(
         setattr(config, key, value)
     await db.commit()
     await db.refresh(config)
+    llm_orchestrator.invalidate(config_id)
     resp = LLMConfigResponse.model_validate(config)
     resp_dict = resp.model_dump()
     resp_dict["api_key_encrypted"] = MASKED_KEY
@@ -120,6 +144,7 @@ async def delete_config(
         raise LLMConfigNotFoundException()
     await db.delete(config)
     await db.commit()
+    llm_orchestrator.invalidate(config_id)
 
 
 @router.post("/{config_id}/test", response_model=LLMConfigTestResponse)
@@ -132,6 +157,7 @@ async def test_config(
     if not config.is_active:
         raise LLMConfigInactiveException()
 
+    provider = None
     try:
         provider_cls = PROVIDER_MAP.get(config.provider, OpenAICompatibleProvider)
         provider = provider_cls(
@@ -167,5 +193,7 @@ async def test_config(
         )
     except Exception as e:
         return LLMConfigTestResponse(
-            success=False, message=str(e), model_info=None
+            success=False,
+            message=_safe_connection_error(e, provider),
+            model_info=None,
         )

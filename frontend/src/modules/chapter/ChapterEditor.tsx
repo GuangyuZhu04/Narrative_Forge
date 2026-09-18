@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
+import { RichChapterTools } from '@/features/reading/RichChapterTools'
 import { Button } from '@/components/ui/Button'
 import { chapterApi, getActiveLLMConfigId } from '@/services/api'
 import { debounce } from '@/utils/debounce'
@@ -41,7 +42,8 @@ export const ChapterEditor: React.FC = () => {
 
   useEffect(() => {
     if (editor && chapter?.content !== undefined) {
-      editor.commands.setContent(chapter.content)
+      editor.commands.setContent(chapter.content, { emitUpdate: false })
+      setWordCount(editor.getText().length)
     }
   }, [chapter, editor])
 
@@ -129,6 +131,7 @@ export const ChapterEditor: React.FC = () => {
             </Button>
           </div>
         </div>
+        <RichChapterTools editor={editor} projectId={projectId} chapterId={chapterId} ready={!!chapter} />
         <div className="mx-auto w-full max-w-4xl flex-1 overflow-auto p-8">
           <EditorContent
             editor={editor}

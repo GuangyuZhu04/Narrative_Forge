@@ -1,10 +1,27 @@
+from __future__ import annotations
+
 import json
-from typing import AsyncIterator
+from copy import deepcopy
+from typing import Any, AsyncIterator
 
 import httpx
 
-from .base import LLMContentFilteredError, LLMOutputTruncatedError, LLMProvider
 from app.core.security import decrypt_api_key
+from app.llm.contracts import LLMResult, LLMStreamEvent
+from app.llm.responses import (
+    convert_messages_to_responses,
+    normalize_responses_tools,
+    parse_responses_result,
+    pop_output_format,
+    usage_stream_event,
+)
+
+from .base import (
+    LLMContentFilteredError,
+    LLMOutputTruncatedError,
+    LLMProvider,
+    LLMStreamProtocolError,
+)
 
 
 class OpenAIProvider(LLMProvider):
@@ -28,6 +45,12 @@ class OpenAIProvider(LLMProvider):
         "store",
         "service_tier",
         "metadata",
+        "include",
+        "background",
+        "truncation",
+        "max_tool_calls",
+        "prompt_cache_key",
+        "safety_identifier",
     }
 
     def __init__(self, config: dict):
@@ -37,7 +60,7 @@ class OpenAIProvider(LLMProvider):
         self.base_url = (config.get("base_url") or self.API_BASE).rstrip("/")
         self.default_params = config.get("default_params") or {}
 
-    async def chat_completion(self, messages: list[dict], **kwargs) -> str:
+    async def response(self, messages: list[dict], **kwargs) -> LLMResult:
         payload = self._build_payload(messages, stream=False, **kwargs)
         async with httpx.AsyncClient(timeout=self.CHAT_TIMEOUT) as client:
             resp = await client.post(
@@ -47,13 +70,25 @@ class OpenAIProvider(LLMProvider):
             )
             resp.raise_for_status()
             data = resp.json()
-            self._raise_for_response_status(data)
-            return self._extract_text(data)
+        self._raise_for_response_status(data)
+        return parse_responses_result(data)
+
+    async def chat_completion(self, messages: list[dict], **kwargs) -> str:
+        return (await self.response(messages, **kwargs)).text
 
     async def stream_completion(
         self, messages: list[dict], **kwargs
     ) -> AsyncIterator[str]:
+        async for event in self.stream_completion_events(messages, **kwargs):
+            if event.get("type") == "content":
+                yield event.get("content", "")
+
+    async def stream_completion_events(
+        self, messages: list[dict], **kwargs
+    ) -> AsyncIterator[LLMStreamEvent]:
         payload = self._build_payload(messages, stream=True, **kwargs)
+        terminal_seen = False
+        current_event_type: str | None = None
         async with httpx.AsyncClient(timeout=self.STREAM_TIMEOUT) as client:
             async with client.stream(
                 "POST",
@@ -62,49 +97,110 @@ class OpenAIProvider(LLMProvider):
                 headers=self._headers(),
             ) as resp:
                 resp.raise_for_status()
-                completed_response = None
                 async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
+                    if not line:
                         continue
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
-                    event = json.loads(data)
-                    event_type = event.get("type")
+                    if line.startswith("event:"):
+                        current_event_type = line[6:].strip()
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    raw_data = line[5:].lstrip()
+                    if raw_data == "[DONE]":
+                        continue
+                    event = json.loads(raw_data)
+                    event_type = (
+                        event.get("type")
+                        or event.get("event")
+                        or current_event_type
+                    )
                     if event_type == "response.output_text.delta":
                         if delta := event.get("delta"):
-                            yield delta
+                            yield {"type": "content", "content": str(delta)}
+                    elif event_type in {
+                        "response.reasoning_text.delta",
+                        "response.reasoning_summary_text.delta",
+                    }:
+                        if delta := event.get("delta"):
+                            yield {"type": "thinking", "content": str(delta)}
+                    elif event_type == "response.function_call_arguments.delta":
+                        yield {
+                            "type": "tool_call_delta",
+                            "content": str(event.get("delta") or ""),
+                            "call_id": str(event.get("call_id") or ""),
+                            "name": str(event.get("name") or ""),
+                        }
+                    elif event_type == "response.output_item.done":
+                        if item := event.get("item"):
+                            yield {
+                                "type": "output_item",
+                                "content": "",
+                                "item": deepcopy(item),
+                            }
                     elif event_type == "response.completed":
-                        completed_response = event.get("response")
-                    elif event_type == "response.failed":
-                        error = event.get("response", {}).get("error") or {}
-                        raise RuntimeError(error.get("message") or "OpenAI response failed")
-                if completed_response:
-                    self._raise_for_response_status(completed_response)
+                        terminal_seen = True
+                        response_data = event.get("response") or event
+                        self._raise_for_response_status(response_data)
+                        yield usage_stream_event(
+                            parse_responses_result(response_data)
+                        )
+                        break
+                    elif event_type == "response.incomplete":
+                        terminal_seen = True
+                        self._raise_for_response_status(
+                            event.get("response") or {"status": "incomplete"}
+                        )
+                    elif event_type in {
+                        "response.failed",
+                        "response.cancelled",
+                        "error",
+                    }:
+                        terminal_seen = True
+                        response_data = event.get("response") or {
+                            "status": (
+                                "failed"
+                                if event_type == "error"
+                                else event_type.removeprefix("response.")
+                            ),
+                            "error": event.get("error"),
+                        }
+                        self._raise_for_response_status(response_data)
+        if not terminal_seen:
+            raise LLMStreamProtocolError(
+                "OpenAI Responses stream ended without a terminal event"
+            )
 
     def _build_payload(
         self, messages: list[dict], stream: bool, **kwargs
     ) -> dict:
-        params = {**(self.default_params or {}), **kwargs}
-        instructions, input_messages = self._convert_messages(messages)
-        payload = {
+        params: dict[str, Any] = {**self.default_params, **kwargs}
+        instructions, input_items = convert_messages_to_responses(messages)
+        payload: dict[str, Any] = {
             "model": self.model,
-            "input": input_messages or "",
+            "input": input_items or "",
             "stream": stream,
         }
         if instructions:
             payload["instructions"] = instructions
 
-        max_tokens = params.pop("max_output_tokens", None)
-        max_tokens = max_tokens or params.pop("max_completion_tokens", None)
-        max_tokens = max_tokens or params.pop("max_tokens", None)
+        max_tokens = self._pop_first(
+            params,
+            "max_output_tokens",
+            "max_completion_tokens",
+            "max_tokens",
+        )
         if max_tokens is not None:
             payload["max_output_tokens"] = max_tokens
 
-        verbosity = params.pop("verbosity", None)
-        if verbosity:
+        output_format = pop_output_format(params)
+        if output_format:
+            text_config = params.get("text") or {}
+            params["text"] = {**text_config, "format": output_format}
+        if verbosity := params.pop("verbosity", None):
             text_config = params.get("text") or {}
             params["text"] = {**text_config, "verbosity": verbosity}
+        if tools := params.get("tools"):
+            params["tools"] = normalize_responses_tools(tools)
 
         payload.update(
             {
@@ -116,43 +212,40 @@ class OpenAIProvider(LLMProvider):
         return payload
 
     def _convert_messages(self, messages: list[dict]) -> tuple[str | None, list[dict]]:
-        instructions: list[str] = []
-        input_messages: list[dict] = []
-        for message in messages:
-            role = message.get("role") or "user"
-            content = message.get("content") or ""
-            if role in {"system", "developer"}:
-                instructions.append(str(content))
-                continue
-            input_messages.append(
-                {
-                    "role": "assistant" if role == "assistant" else "user",
-                    "content": str(content),
-                }
-            )
-        return "\n\n".join(part for part in instructions if part).strip() or None, input_messages
+        return convert_messages_to_responses(messages)
 
     def _extract_text(self, data: dict) -> str:
-        if output_text := data.get("output_text"):
-            return output_text
-        chunks: list[str] = []
-        for item in data.get("output") or []:
-            for content in item.get("content") or []:
-                if content.get("type") in {"output_text", "text"} and content.get("text"):
-                    chunks.append(content["text"])
-        return "".join(chunks)
+        return parse_responses_result(data).text
 
     def _raise_for_response_status(self, data: dict) -> None:
-        if data.get("status") == "incomplete":
+        status = data.get("status")
+        if status == "incomplete":
             reason = (data.get("incomplete_details") or {}).get("reason")
             if reason in {"max_output_tokens", "max_tokens"}:
-                raise LLMOutputTruncatedError(f"LLM output stopped early: {reason}")
-            raise RuntimeError(f"OpenAI response incomplete: {reason}")
-        if data.get("status") == "failed":
+                raise LLMOutputTruncatedError(
+                    f"LLM output stopped early: {reason}"
+                )
+            if reason in {"content_filter", "safety"}:
+                raise LLMContentFilteredError(
+                    f"LLM output was filtered: {reason}"
+                )
+            raise RuntimeError(f"OpenAI response incomplete: {reason or 'unknown'}")
+        if status == "failed":
             error = data.get("error") or {}
             raise RuntimeError(error.get("message") or "OpenAI response failed")
-        if data.get("status") == "cancelled":
+        if status == "cancelled":
             raise LLMContentFilteredError("OpenAI response was cancelled")
+
+    @staticmethod
+    def _pop_first(params: dict[str, Any], *keys: str) -> Any:
+        result = None
+        found = False
+        for key in keys:
+            value = params.pop(key, None)
+            if not found and value is not None:
+                result = value
+                found = True
+        return result
 
     def _headers(self) -> dict:
         return {

@@ -1,4 +1,5 @@
 import json
+from math import isfinite
 import re
 from typing import Any, AsyncIterator
 
@@ -7,15 +8,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.json_mode import json_object_response_kwargs
 from app.llm.output_limits import model_output_token_budget
+from app.llm.providers.deepseek import DeepSeekProvider
 from app.models.character import Character
 from app.models.chapter import Chapter
 from app.models.llm_config import LLMConfig
 from app.models.outline import Outline, OutlineNode
 from app.models.project import Project
 from app.models.scene import Scene
-from app.schemas.chapter import NovelWriteContextOverride
 from app.schemas.novel_agent import NovelAgentWriteRequest
-from app.services.chapter_service import NOVEL_WRITE_MAX_TOKENS, chapter_service
+from app.services.agent_chapter_pipeline_service import (
+    AgentChapterPipelineError,
+    agent_chapter_pipeline_service,
+)
+from app.services.chapter_service import (
+    NOVEL_WRITE_MAX_TARGET_CHARS,
+    NOVEL_WRITE_MAX_TOKENS,
+    NOVEL_WRITE_MIN_TARGET_CHARS,
+)
 from app.services.llm_orchestrator import llm_orchestrator
 from app.services.system_prompt_service import (
     NOVEL_AGENT_BLUEPRINT_SYSTEM_KEY,
@@ -41,6 +50,10 @@ class NovelAgentOutputError(ValueError):
     """Raised when the planning model returns unusable agent JSON."""
 
 
+class NovelAgentStructuredOutputError(NovelAgentOutputError):
+    """Raised when a model response is not the requested JSON structure."""
+
+
 class NovelAgentService:
     async def plan_from_idea(
         self,
@@ -57,6 +70,10 @@ class NovelAgentService:
                 data.volume_count,
                 data.chapter_count,
             )
+            self._normalize_blueprint_chapter_contracts(
+                blueprint,
+                data.word_count_target,
+            )
         except NovelAgentOutputError as initial_error:
             try:
                 blueprint = self._unwrap_blueprint(
@@ -72,6 +89,10 @@ class NovelAgentService:
                     blueprint,
                     data.volume_count,
                     data.chapter_count,
+                )
+                self._normalize_blueprint_chapter_contracts(
+                    blueprint,
+                    data.word_count_target,
                 )
             except NovelAgentOutputError as repair_error:
                 raise NovelAgentOutputError(
@@ -151,6 +172,13 @@ class NovelAgentService:
             blueprint,
             data.volume_count,
             data.chapter_count,
+        )
+        # Sessions planned before chapter-contract normalization was introduced
+        # must be safe to execute as well. The operation is deterministic and
+        # idempotent for newly planned sessions.
+        self._normalize_blueprint_chapter_contracts(
+            blueprint,
+            data.word_count_target,
         )
 
         plan_completed = self._step_progress(
@@ -305,11 +333,14 @@ class NovelAgentService:
             style_guide = self._text_value(blueprint.get("style_guide")) or (
                 data.style_requirements or ""
             )
-            scene_context = self._build_scene_context(scenes)
             chapter_output_tokens = await self._output_token_budget(
                 db,
                 data.llm_config_id,
                 NOVEL_WRITE_MAX_TOKENS,
+            )
+            chapter_state = await agent_chapter_pipeline_service.build_project_state(
+                db,
+                project_id,
             )
             for index, chapter in enumerate(chapters[:target_write_count], start=1):
                 yield {
@@ -322,18 +353,20 @@ class NovelAgentService:
                         total=target_write_count,
                     ),
                 }
-                result = await chapter_service.novel_write(
-                    db,
-                    data.llm_config_id,
-                    project_id,
-                    chapter.id,
-                    style_guide,
-                    NovelWriteContextOverride(
-                        scene_context=scene_context,
+                try:
+                    result = await agent_chapter_pipeline_service.execute_write(
+                        db,
+                        llm_config_id=data.llm_config_id,
+                        project_id=project_id,
+                        chapter_id=chapter.id,
+                        state=chapter_state,
                         style_requirements=style_guide or None,
-                    ),
-                    max_tokens=chapter_output_tokens,
-                )
+                        policy={"consistency": False, "polish": False},
+                        max_tokens=chapter_output_tokens,
+                        backup_summary="Agent 生成前自动备份",
+                    )
+                except AgentChapterPipelineError as exc:
+                    raise NovelAgentOutputError(str(exc)) from exc
                 if result:
                     updated = await db.get(Chapter, chapter.id)
                     if updated:
@@ -359,6 +392,11 @@ class NovelAgentService:
             yield {"type": "step", "step": completed_step}
 
             refreshed_chapters = await self._list_project_chapters(db, project_id)
+            # The shared chapter pipeline persists its continuity ledger in
+            # Project.settings. That UPDATE can expire server-managed fields
+            # (notably updated_at), so refresh before the API serializes this
+            # instance outside SQLAlchemy's async greenlet context.
+            await db.refresh(project)
             yield {
                 "type": "result",
                 "result": {
@@ -466,7 +504,12 @@ class NovelAgentService:
             f"- 全书所有卷合计必须恰好生成 {data.chapter_count} 个 CHAPTER 节点；"
             "这是全书总章数，不是每卷章数。\n"
             "- 各卷章节数可以不同，请按剧情容量分配，不要求平均分配。\n"
-            "- 返回前请统计所有卷的 CHAPTER 节点总数并确认符合上述数量。"
+            "- 返回前请统计所有卷的 CHAPTER 节点总数并确认符合上述数量。\n"
+            "- 每个 CHAPTER.metadata 必须含 pov、scene_focus、characters、hook、"
+            "target_chars、ordered_beats、must_reveal、must_not_reveal、"
+            "expected_state_deltas；ordered_beats 按执行顺序列出本章关键节拍，"
+            "信息揭示字段明确本章可揭示与不可提前揭示的边界，"
+            "expected_state_deltas 只记录本章计划造成的状态变化。"
         )
         messages = [
             {
@@ -487,8 +530,20 @@ class NovelAgentService:
             ),
             **json_object_response_kwargs(),
         }
-        if await self._can_use_deepseek_responses_api(db, data):
-            kwargs["api_mode"] = "responses"
+        config = await db.get(LLMConfig, data.llm_config_id)
+        if (
+            config
+            and config.provider == "deepseek"
+            and DeepSeekProvider.supports_responses_model(config.model_name)
+        ):
+            # An explicit override makes the UI switch authoritative.  Leaving
+            # this unset would let the provider's automatic V4 detection
+            # re-enable Responses after the author switched it off.
+            kwargs["api_mode"] = (
+                "responses"
+                if data.use_deepseek_responses_api
+                else "chat_completions"
+            )
         return messages, kwargs
 
     async def _request_blueprint(
@@ -502,18 +557,6 @@ class NovelAgentService:
         if not isinstance(blueprint, dict):
             raise NovelAgentOutputError("Agent 生成蓝图必须是 JSON 对象")
         return blueprint
-
-    async def _can_use_deepseek_responses_api(
-        self,
-        db: AsyncSession,
-        data: NovelAgentWriteRequest,
-    ) -> bool:
-        if not data.use_deepseek_responses_api:
-            return False
-        config = await db.get(LLMConfig, data.llm_config_id)
-        if not config or config.provider != "deepseek":
-            return False
-        return (config.model_name or "").strip() == "deepseek-v4-flash"
 
     @staticmethod
     async def _output_token_budget(
@@ -538,18 +581,92 @@ class NovelAgentService:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            start = text.find("{")
-            if start == -1:
-                raise NovelAgentOutputError("Agent 生成没有返回合法 JSON 对象")
-            depth = 0
-            for index in range(start, len(text)):
-                if text[index] == "{":
-                    depth += 1
-                elif text[index] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        return json.loads(text[start : index + 1])
+            pass
+
+        start: int | None = None
+        blocked_container_start: int | None = None
+        container_stack: list[str] = []
+        depth = 0
+        in_string = False
+        escaped = False
+        last_error: json.JSONDecodeError | None = None
+        for index, char in enumerate(text):
+            if start is None:
+                if blocked_container_start is not None:
+                    if in_string:
+                        if escaped:
+                            escaped = False
+                        elif char == "\\":
+                            escaped = True
+                        elif char == '"':
+                            in_string = False
+                        continue
+                    if char == '"':
+                        in_string = True
+                    elif char in "[{":
+                        container_stack.append(char)
+                    elif char in "]}":
+                        expected = "[" if char == "]" else "{"
+                        if not container_stack or container_stack[-1] != expected:
+                            return json.loads(text[blocked_container_start : index + 1])
+                        container_stack.pop()
+                        if not container_stack:
+                            candidate = text[blocked_container_start : index + 1]
+                            try:
+                                return json.loads(candidate)
+                            except json.JSONDecodeError as exc:
+                                last_error = exc
+                                blocked_container_start = None
+                                in_string = False
+                                escaped = False
+                    continue
+                if char == "[":
+                    blocked_container_start = index
+                    container_stack = [char]
+                    in_string = False
+                    escaped = False
+                    continue
+                if char == "{":
+                    start = index
+                    depth = 1
+                    in_string = False
+                    escaped = False
+                continue
+
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : index + 1]
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError as exc:
+                        last_error = exc
+                        start = None
+                        in_string = False
+                        escaped = False
+
+        if blocked_container_start is not None:
+            # A truncated outer array must not expose an inner object as valid output.
+            return json.loads(text[blocked_container_start:])
+        if start is not None:
+            # Never recover an inner object from a truncated outer response.
             return json.loads(text[start:])
+        if last_error is not None:
+            raise last_error
+        raise NovelAgentOutputError("Agent 生成没有返回合法 JSON 对象")
 
     @staticmethod
     def _ensure_blueprint_shape(blueprint: dict[str, Any]) -> None:
@@ -601,6 +718,330 @@ class NovelAgentService:
             volume_count += child_volumes
             chapter_count += child_chapters
         return volume_count, chapter_count
+
+    @classmethod
+    def _normalize_blueprint_chapter_contracts(
+        cls,
+        blueprint: dict[str, Any],
+        word_count_target: int,
+    ) -> None:
+        """Normalize every chapter contract and close its length budget.
+
+        Agent generation receives the whole outline in one JSON response, unlike
+        guided creation's batched chapter planner. Normalize the same executable
+        fields here before the blueprint is checkpointed or materialized so both
+        paths feed the shared chapter writer an equivalent contract.
+        """
+
+        outline = blueprint.get("outline")
+        children = outline.get("children") if isinstance(outline, dict) else None
+        chapter_nodes = cls._chapter_blueprint_nodes(children)
+        if not chapter_nodes:
+            raise NovelAgentOutputError("Agent 生成蓝图缺少章节合同")
+
+        targets = cls._normalize_chapter_targets(
+            chapter_nodes,
+            word_count_target,
+        )
+        for chapter_index, (node, target_chars) in enumerate(
+            zip(chapter_nodes, targets, strict=True),
+            start=1,
+        ):
+            metadata = cls._normalize_chapter_metadata(
+                node.get("metadata"),
+                target_chars=target_chars,
+                chapter_index=chapter_index,
+            )
+            node["node_type"] = "CHAPTER"
+            node["title"] = cls._bounded_text(
+                node.get("title"),
+                f"第{chapter_index}章",
+                300,
+            )
+            node["summary"] = cls._bounded_readable_text(
+                node.get("summary"),
+                "推进主线并改变故事状态",
+                500,
+            )
+            node["metadata"] = metadata
+            if not isinstance(node.get("children"), list):
+                node["children"] = []
+
+    @classmethod
+    def _chapter_blueprint_nodes(cls, nodes: Any) -> list[dict[str, Any]]:
+        if not isinstance(nodes, list):
+            return []
+        chapters: list[dict[str, Any]] = []
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            if str(node.get("node_type") or "").strip().upper() == "CHAPTER":
+                chapters.append(node)
+            chapters.extend(cls._chapter_blueprint_nodes(node.get("children")))
+        return chapters
+
+    @classmethod
+    def _normalize_chapter_metadata(
+        cls,
+        value: Any,
+        *,
+        target_chars: int,
+        chapter_index: int,
+    ) -> dict[str, Any]:
+        source = dict(value) if isinstance(value, dict) else {}
+        scene_focus: str | list[str]
+        if isinstance(source.get("scene_focus"), list):
+            scene_focus = cls._bounded_reference_list(
+                source.get("scene_focus"),
+                max_items=4,
+                max_chars=180,
+            )
+        else:
+            scene_focus = cls._bounded_readable_text(
+                source.get("scene_focus"),
+                "按场景卡选择",
+                300,
+            )
+        return {
+            "chapter_index": chapter_index,
+            "pov": cls._bounded_readable_text(
+                source.get("pov"),
+                "按已确认视角策略",
+                120,
+            ),
+            "scene_focus": scene_focus,
+            "characters": cls._bounded_reference_list(
+                source.get("characters"),
+                max_items=8,
+                max_chars=80,
+            ),
+            "hook": cls._bounded_readable_text(
+                source.get("hook"),
+                "推动下一章",
+                300,
+            ),
+            "target_chars": target_chars,
+            "ordered_beats": cls._bounded_value_list(
+                source.get("ordered_beats"),
+                max_items=8,
+                max_chars=300,
+            ),
+            "must_reveal": cls._bounded_value_list(
+                source.get("must_reveal"),
+                max_items=6,
+                max_chars=200,
+            ),
+            "must_not_reveal": cls._bounded_value_list(
+                source.get("must_not_reveal"),
+                max_items=6,
+                max_chars=200,
+            ),
+            "expected_state_deltas": cls._bounded_contract_value(
+                source.get("expected_state_deltas"),
+                max_chars=1500,
+            ),
+        }
+
+    @staticmethod
+    def _normalize_chapter_targets(
+        chapters: list[dict[str, Any]],
+        word_count_target: int,
+    ) -> list[int]:
+        count = len(chapters)
+        if not count:
+            return []
+        executable_total = max(
+            NOVEL_WRITE_MIN_TARGET_CHARS * count,
+            min(NOVEL_WRITE_MAX_TARGET_CHARS * count, int(word_count_target)),
+        )
+        default_weight = executable_total / count
+        weights: list[float] = []
+        for chapter in chapters:
+            metadata = (
+                chapter.get("metadata")
+                if isinstance(chapter.get("metadata"), dict)
+                else {}
+            )
+            raw_target = metadata.get("target_chars")
+            try:
+                weight = float(raw_target)
+            except (TypeError, ValueError):
+                weight = default_weight
+            if not isfinite(weight) or weight <= 0:
+                weight = default_weight
+            weights.append(weight)
+
+        weight_total = sum(weights) or float(count)
+        targets = [
+            max(
+                NOVEL_WRITE_MIN_TARGET_CHARS,
+                min(
+                    NOVEL_WRITE_MAX_TARGET_CHARS,
+                    round(executable_total * weight / weight_total),
+                ),
+            )
+            for weight in weights
+        ]
+        difference = executable_total - sum(targets)
+        while difference:
+            if difference > 0:
+                candidates = [
+                    index
+                    for index, target in enumerate(targets)
+                    if target < NOVEL_WRITE_MAX_TARGET_CHARS
+                ]
+            else:
+                candidates = [
+                    index
+                    for index, target in enumerate(targets)
+                    if target > NOVEL_WRITE_MIN_TARGET_CHARS
+                ]
+            if not candidates:
+                break
+            share = max(1, abs(difference) // len(candidates))
+            for index in candidates:
+                capacity = (
+                    NOVEL_WRITE_MAX_TARGET_CHARS - targets[index]
+                    if difference > 0
+                    else targets[index] - NOVEL_WRITE_MIN_TARGET_CHARS
+                )
+                change = min(capacity, share, abs(difference))
+                targets[index] += change if difference > 0 else -change
+                difference += -change if difference > 0 else change
+                if not difference:
+                    break
+        return targets
+
+    @classmethod
+    def _bounded_reference_list(
+        cls,
+        value: Any,
+        *,
+        max_items: int,
+        max_chars: int,
+    ) -> list[str]:
+        values = value if isinstance(value, list) else ([value] if value else [])
+        normalized: list[str] = []
+        for item in values:
+            if isinstance(item, dict):
+                item = (
+                    item.get("name")
+                    or item.get("label")
+                    or item.get("id")
+                    or item.get("title")
+                    or item
+                )
+            text = cls._bounded_readable_text(item, "", max_chars)
+            if text and text not in normalized:
+                normalized.append(text)
+            if len(normalized) >= max_items:
+                break
+        return normalized
+
+    @classmethod
+    def _bounded_value_list(
+        cls,
+        value: Any,
+        *,
+        max_items: int,
+        max_chars: int,
+    ) -> list[str]:
+        if isinstance(value, dict):
+            values = list(value.values())
+        elif isinstance(value, list):
+            values = value
+        else:
+            values = [value] if value else []
+        normalized: list[str] = []
+        for item in values:
+            text = cls._bounded_readable_text(item, "", max_chars)
+            if text and text not in normalized:
+                normalized.append(text)
+            if len(normalized) >= max_items:
+                break
+        return normalized
+
+    @classmethod
+    def _bounded_contract_value(cls, value: Any, *, max_chars: int) -> Any:
+        if isinstance(value, dict):
+            normalized: dict[str, Any] = {}
+            for raw_key, raw_value in list(value.items())[:8]:
+                key = cls._bounded_text(raw_key, "state", 80)
+                if isinstance(raw_value, (int, float, bool)) or raw_value is None:
+                    candidate_value: Any = raw_value
+                elif isinstance(raw_value, list):
+                    candidate_value = cls._bounded_value_list(
+                        raw_value,
+                        max_items=6,
+                        max_chars=180,
+                    )
+                else:
+                    candidate_value = cls._bounded_readable_text(
+                        raw_value,
+                        "",
+                        350,
+                    )
+                candidate = {**normalized, key: candidate_value}
+                if len(json.dumps(candidate, ensure_ascii=False)) <= max_chars:
+                    normalized = candidate
+            return normalized
+        if isinstance(value, list):
+            normalized_list: list[str] = []
+            for item in cls._bounded_value_list(
+                value,
+                max_items=8,
+                max_chars=250,
+            ):
+                candidate = [*normalized_list, item]
+                if len(json.dumps(candidate, ensure_ascii=False)) > max_chars:
+                    break
+                normalized_list = candidate
+            return normalized_list
+        if isinstance(value, (int, float, bool)) or value is None:
+            return value
+        return cls._bounded_readable_text(value, "", max(0, max_chars - 2))
+
+    @staticmethod
+    def _bounded_text(value: Any, default: Any, max_chars: int) -> str:
+        text = str(value).strip() if value is not None else ""
+        if not text:
+            text = str(default or "").strip()
+        return text[:max_chars]
+
+    @classmethod
+    def _bounded_readable_text(
+        cls,
+        value: Any,
+        default: Any,
+        max_chars: int,
+    ) -> str:
+        if isinstance(value, dict):
+            text = json.dumps(value, ensure_ascii=False, indent=2)
+        elif isinstance(value, list):
+            parts = []
+            for item in value:
+                if isinstance(item, (dict, list)):
+                    item_text = json.dumps(item, ensure_ascii=False)
+                else:
+                    item_text = str(item).strip() if item is not None else ""
+                if item_text:
+                    parts.append(f"- {item_text}")
+            text = "\n".join(parts)
+        else:
+            text = str(value).strip() if value is not None else ""
+        if not text:
+            text = str(default or "").strip()
+        if len(text) <= max_chars:
+            return text
+        if max_chars <= 0:
+            return ""
+        if max_chars == 1:
+            return "…"
+        truncated = text[: max_chars - 1].rstrip()
+        last_newline = truncated.rfind("\n")
+        if last_newline >= max_chars // 2:
+            truncated = truncated[:last_newline].rstrip()
+        return f"{truncated}…"
 
     @staticmethod
     def _unwrap_blueprint(blueprint: dict[str, Any]) -> dict[str, Any]:
@@ -710,13 +1151,56 @@ class NovelAgentService:
         for index, item in enumerate(source):
             if not isinstance(item, dict):
                 continue
+            basic_info = (
+                dict(item["basic_info"]) if isinstance(item.get("basic_info"), dict) else {}
+            )
+            for key in (
+                "role",
+                "age",
+                "gender",
+                "appearance",
+                "occupation",
+                "background",
+            ):
+                if item.get(key) not in (None, "", [], {}):
+                    basic_info.setdefault(key, item[key])
+
+            personality = (
+                dict(item["personality"]) if isinstance(item.get("personality"), dict) else {}
+            )
+            for key in (
+                "desire",
+                "fear",
+                "false_belief",
+                "misbelief",
+                "motivation",
+                "action_logic",
+                "speech_style",
+                "relationships",
+                "relationship_tension",
+                "traits",
+                "values",
+                "habits",
+                "flaws",
+            ):
+                if item.get(key) not in (None, "", [], {}):
+                    personality.setdefault(key, item[key])
+
+            growth_arc_source = item.get("growth_arc")
+            if not isinstance(growth_arc_source, (dict, str)):
+                growth_arc_source = item.get("character_arc")
+            if isinstance(growth_arc_source, dict):
+                growth_arc = dict(growth_arc_source)
+            else:
+                growth_arc_text = self._text_value(growth_arc_source)
+                growth_arc = {"development_direction": growth_arc_text} if growth_arc_text else {}
             character = Character(
                 project_id=project_id,
                 name=(self._text_value(item.get("name")) or "未命名人物")[:100],
                 aliases=self._list_of_strings(item.get("aliases")),
-                basic_info=item.get("basic_info") if isinstance(item.get("basic_info"), dict) else None,
-                personality=item.get("personality") if isinstance(item.get("personality"), dict) else None,
-                growth_arc=item.get("growth_arc") if isinstance(item.get("growth_arc"), dict) else None,
+                basic_info=basic_info or None,
+                personality=personality or None,
+                growth_arc=growth_arc or None,
                 biography=self._text_value(item.get("biography")),
                 setting_collection=self._text_value(item.get("setting_collection")),
                 notes=self._text_value(item.get("notes")),
@@ -830,28 +1314,6 @@ class NovelAgentService:
         )
         max_order = result.scalar()
         return (max_order if max_order is not None else -1) + 1
-
-    @staticmethod
-    def _build_scene_context(scenes: list[Scene]) -> str:
-        if not scenes:
-            return "暂无场景信息"
-        blocks = []
-        for scene in scenes:
-            parts = [f"场景：{scene.name}"]
-            if scene.location:
-                parts.append(f"地点：{scene.location}")
-            if scene.time:
-                parts.append(f"时间：{scene.time}")
-            if scene.atmosphere:
-                parts.append(f"氛围：{scene.atmosphere}")
-            if scene.description:
-                parts.append(f"描述：{scene.description}")
-            if scene.details:
-                parts.append(f"细节：{scene.details}")
-            if scene.notes:
-                parts.append(f"备注：{scene.notes}")
-            blocks.append("\n".join(parts))
-        return "\n\n".join(blocks)
 
     @staticmethod
     def _text_value(value: Any) -> str | None:

@@ -1,6 +1,8 @@
 import json
+import logging
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +15,7 @@ from app.models.project import Project
 from app.schemas.character import CharacterResponse
 from app.schemas.chapter import ChapterResponse
 from app.schemas.novel_agent import (
+    NovelAgentChatTurnRequest,
     NovelAgentContinueRequest,
     NovelAgentExecuteRequest,
     NovelAgentPlanResponse,
@@ -25,14 +28,16 @@ from app.schemas.outline import OutlineResponse
 from app.schemas.project import ProjectResponse
 from app.schemas.scene import SceneResponse
 from app.services.novel_agent_continue_service import novel_agent_continue_service
+from app.services.novel_agent_chat_service import novel_agent_chat_service
 from app.services.novel_agent_service import (
     NovelAgentOutputError,
     novel_agent_service,
 )
 from app.services.novel_agent_session_service import novel_agent_session_service
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
-SESSION_MODES = {"generate", "continue_edit"}
+SESSION_MODES = {"generate", "continue_edit", "chat_generate"}
 
 
 def _serialize_generation_result(result: dict, session_id: str) -> dict:
@@ -78,11 +83,27 @@ def _error_message(exc: Exception) -> str:
         return str(exc)
     if isinstance(exc, LLMOutputTruncatedError):
         return (
-            "Agent 在当前模型最大输出预算下仍达到长度限制。章节任务已使用"
-            "独立上下文；请缩短单章目标或减少蓝图/Plan 规模后重试。"
+            "Agent 输出达到当前模型的长度限制。请减少本步骤的生成数量或内容长度，"
+            "再从最近的恢复检查点重试。"
         )
     if isinstance(exc, LLMContentFilteredError):
         return "Agent 输出被模型安全策略中断，请调整输入要求后重试。"
+    if isinstance(exc, httpx.HTTPStatusError):
+        detail = ""
+        try:
+            payload = exc.response.json()
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(error, dict):
+                detail = str(error.get("message") or "").strip()
+            elif isinstance(error, str):
+                detail = error.strip()
+            elif isinstance(payload, dict):
+                detail = str(payload.get("message") or payload.get("detail") or "").strip()
+        except (TypeError, ValueError):
+            detail = ""
+        status_code = exc.response.status_code
+        suffix = f"：{detail[:300]}" if detail else ""
+        return f"上游模型 API 返回 HTTP {status_code}{suffix}"
     return "Agent 执行失败，请稍后重试。"
 
 
@@ -166,6 +187,32 @@ async def get_agent_session(
     return session
 
 
+@router.post(
+    "/sessions/{session_id}/sync-confirmed-artifacts",
+    response_model=NovelAgentSessionResponse,
+)
+async def sync_confirmed_chat_artifacts(
+    project_id: str,
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    project: Project = Depends(verify_project_access),
+):
+    session = await novel_agent_session_service.get_session(db, session_id)
+    if (
+        not session
+        or session.project_id != project_id
+        or session.mode != "chat_generate"
+    ):
+        raise HTTPException(status_code=404, detail="对话创作会话不存在")
+    try:
+        return await novel_agent_chat_service.sync_session_artifacts(
+            db, project_id, session
+        )
+    except NovelAgentOutputError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @router.put("/sessions/{session_id}", response_model=NovelAgentSessionResponse)
 async def update_agent_session(
     project_id: str,
@@ -191,6 +238,73 @@ async def delete_agent_session(
     if not session or session.project_id != project_id:
         raise HTTPException(status_code=404, detail="Agent 会话不存在")
     await novel_agent_session_service.delete_session(db, session)
+
+
+@router.post("/chat-turn-stream")
+async def stream_novel_agent_chat_turn(
+    project_id: str,
+    data: NovelAgentChatTurnRequest,
+    db: AsyncSession = Depends(get_db),
+    project: Project = Depends(verify_project_access),
+):
+    session = await novel_agent_session_service.resolve_session(
+        db, project_id, "chat_generate", data.session_id
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="对话创作会话不存在或模式不匹配")
+    session_id = session.id
+
+    async def event_generator():
+        try:
+            yield _sse_data({"type": "session", "session": _session_response(session)})
+            async for event in novel_agent_chat_service.handle_turn_stream(
+                db, project_id, session, data
+            ):
+                yield _sse_data(event)
+            refreshed = await novel_agent_session_service.get_session(db, session_id)
+            if refreshed:
+                yield _sse_data(
+                    {"type": "session", "session": _session_response(refreshed)}
+                )
+            yield _sse_data({"type": "done"})
+        except Exception as exc:
+            logger.exception(
+                "Novel agent chat turn failed for session %s", session_id
+            )
+            message = _error_message(exc)
+            try:
+                await db.rollback()
+                failed_session = await novel_agent_session_service.get_session(
+                    db, session_id
+                )
+                if failed_session:
+                    await novel_agent_session_service.fail_run(
+                        db,
+                        failed_session,
+                        list(failed_session.steps or []),
+                        message,
+                        result=(
+                            failed_session.result
+                            if isinstance(failed_session.result, dict)
+                            else None
+                        ),
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to persist novel agent chat failure for session %s",
+                    session_id,
+                )
+                try:
+                    await db.rollback()
+                except Exception:
+                    logger.exception(
+                        "Failed to roll back novel agent chat session %s after "
+                        "failure persistence error",
+                        session_id,
+                    )
+            yield _sse_data({"type": "error", "error": message})
+
+    return _streaming_response(event_generator())
 
 
 @router.post("/write", response_model=NovelAgentPlanResponse)

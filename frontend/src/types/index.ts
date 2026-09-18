@@ -80,6 +80,7 @@ export interface Scene {
 }
 
 export interface Chapter {
+  highlights?: import('@/features/reading/highlights').TextHighlight[]
   id: string
   project_id: string
   outline_node_id: string | null
@@ -177,7 +178,77 @@ export interface NovelAgentWriteResponse {
   steps: NovelAgentStepResult[]
 }
 
-export type NovelAgentSessionMode = 'generate' | 'continue_edit'
+export type NovelAgentSessionMode =
+  | 'generate'
+  | 'continue_edit'
+  | 'chat_generate'
+
+export interface NovelAgentChatMessage {
+  id?: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  kind?: string
+  created_at?: string
+  metadata?: Record<string, unknown> | null
+}
+
+export interface NovelAgentChatOption {
+  id: string
+  label: string
+  description: string
+  recommended: boolean
+  value: unknown
+}
+
+export interface NovelAgentChatQuestion {
+  id: string
+  header: string
+  question: string
+  options: NovelAgentChatOption[]
+  allow_custom: boolean
+  state_version: number
+}
+
+export interface NovelAgentChatAnswer {
+  question_id: string
+  option_id?: string
+  custom_text?: string
+}
+
+export type NovelAgentChatArtifact = Record<string, unknown> & {
+  id?: string
+  kind?: string
+  title?: string
+  status?: string
+  content?: string
+  summary?: string
+}
+
+export interface NovelAgentChatExecution extends Record<string, unknown> {
+  status?: string
+  stage?: string
+  label?: string
+  message?: string
+  current?: number
+  total?: number
+  percent?: number
+}
+
+export interface NovelAgentChatState {
+  stage: string
+  state_version: number
+  messages: NovelAgentChatMessage[]
+  pending_questions: NovelAgentChatQuestion[]
+  artifacts: NovelAgentChatArtifact[]
+  execution: NovelAgentChatExecution | null
+}
+
+export interface NovelAgentChatTurnRequest {
+  session_id?: string
+  llm_config_id: string
+  message?: string
+  answers?: NovelAgentChatAnswer[]
+}
 
 export interface NovelAgentContinueRequestPayload {
   llm_config_id: string

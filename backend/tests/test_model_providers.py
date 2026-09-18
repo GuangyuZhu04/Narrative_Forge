@@ -45,6 +45,50 @@ def test_openai_provider_builds_responses_payload():
     assert payload["stream"] is False
 
 
+def test_openai_maps_json_schema_tools_and_prompt_cache_key():
+    provider = OpenAIProvider(
+        _config("openai", "gpt-5.5", "https://api.openai.com/v1")
+    )
+    schema = {
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"],
+        "additionalProperties": False,
+    }
+
+    payload = provider._build_payload(
+        [{"role": "user", "content": "outline"}],
+        stream=False,
+        json_schema=schema,
+        schema_name="novel_outline",
+        prompt_cache_key="project:123:v2",
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "save_outline",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ],
+    )
+
+    assert payload["text"]["format"] == {
+        "type": "json_schema",
+        "name": "novel_outline",
+        "schema": schema,
+        "strict": True,
+    }
+    assert payload["tools"] == [
+        {
+            "type": "function",
+            "name": "save_outline",
+            "parameters": {"type": "object"},
+        }
+    ]
+    assert payload["prompt_cache_key"] == "project:123:v2"
+
+
 def test_anthropic_provider_builds_messages_payload():
     provider = AnthropicProvider(
         _config("anthropic", "claude-sonnet-4-6", "https://api.anthropic.com/v1")
@@ -68,6 +112,40 @@ def test_anthropic_provider_builds_messages_payload():
     ]
     assert payload["max_tokens"] == 256
     assert payload["stream"] is True
+
+
+def test_anthropic_maps_json_schema_to_output_config():
+    provider = AnthropicProvider(
+        _config("anthropic", "claude-sonnet-4-6", "https://api.anthropic.com/v1")
+    )
+    schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+
+    payload = provider._build_payload(
+        [{"role": "user", "content": "character"}],
+        stream=False,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "character", "schema": schema, "strict": True},
+        },
+    )
+
+    assert payload["output_config"] == {
+        "format": {"type": "json_schema", "schema": schema}
+    }
+
+
+def test_anthropic_json_object_falls_back_without_invalid_output_config():
+    provider = AnthropicProvider(
+        _config("anthropic", "claude-sonnet-4-6", "https://api.anthropic.com/v1")
+    )
+
+    payload = provider._build_payload(
+        [{"role": "user", "content": "Return a JSON object"}],
+        stream=False,
+        response_format={"type": "json_object"},
+    )
+
+    assert "output_config" not in payload
 
 
 def test_google_provider_builds_generate_content_payload():
@@ -100,6 +178,28 @@ def test_google_provider_builds_generate_content_payload():
         "maxOutputTokens": 256,
         "topP": 0.9,
     }
+
+
+def test_google_maps_json_schema_and_uses_header_api_key():
+    provider = GoogleProvider(
+        _config(
+            "google",
+            "gemini-3.5-flash",
+            "https://generativelanguage.googleapis.com/v1beta",
+        )
+    )
+    schema = {"type": "object", "properties": {"scene": {"type": "string"}}}
+
+    payload = provider._build_payload(
+        [{"role": "user", "content": "scene"}],
+        json_schema=schema,
+        schema_name="scene",
+    )
+
+    assert payload["generationConfig"]["responseMimeType"] == "application/json"
+    assert payload["generationConfig"]["responseJsonSchema"] == schema
+    assert "key=" not in provider._endpoint("generateContent")
+    assert provider._headers()["x-goog-api-key"] == "sk-test"
 
 
 def test_openai_incomplete_max_tokens_is_truncation():

@@ -111,7 +111,7 @@ export const ProjectList: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-gray-50">
+    <div className="app-wallpaper-root flex h-screen flex-col bg-gray-50">
       <header className="flex items-center justify-between border-b bg-white px-6 py-4">
         <h1 className="text-xl font-bold text-gray-800">
           文脉工坊

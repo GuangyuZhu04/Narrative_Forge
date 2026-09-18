@@ -1,5 +1,7 @@
 # 文脉工坊（Narrative Forge）— 启动与使用说明
 
+2026-09-10：正文编辑新增四种颜色的选区高亮和阅读模式（主题、排版、目录、进度、书签及按屏翻页）。见 [文字高亮与阅读模式](docs/reading-highlights.md)。
+
 ## 1. 环境要求
 
 | 依赖 | 最低版本 | 说明 |
@@ -61,7 +63,7 @@ narrative-forge/
 
 ```bash
 cd backend
-pip install fastapi uvicorn sqlalchemy aiosqlite alembic httpx pydantic pydantic-settings cryptography python-dotenv aiofiles websockets
+pip install fastapi uvicorn sqlalchemy aiosqlite alembic httpx pydantic pydantic-settings cryptography python-dotenv aiofiles
 ```
 
 或使用项目配置安装：
@@ -208,6 +210,10 @@ npx tsc --noEmit
 
 不同服务商的推荐模型和消息格式见 [LLM Provider 支持](docs/llm-providers.md)。
 
+使用 DeepSeek V4 进行“对话创作”时，核心设定和逐卷大纲请求会自动使用官方最大 384K 输出预算；简介、风格指南、卷摘要、状态说明和规则项不再按固定字符数截断。
+
+`deepseek-v4-flash` 与 `deepseek-v4-pro` 默认通过 DeepSeek Responses API 调用；该接口是无状态的，项目会在本地保存并重放完整历史。需要兼容旧接口时，可在 Agent 界面关闭 Responses 以回退 Chat Completions。
+
 ### 第二步：创建项目
 
 1. 在首页点击「新建项目」
@@ -324,6 +330,7 @@ MiniMax 音色库通过官方接口查询和删除音色，删除后会立即重
 | Agent | POST | `/api/v1/projects/{pid}/novel-agent/write` | 从想法生成项目蓝图、人物、场景、章节并自动写作正文 |
 | Agent | POST | `/api/v1/projects/{pid}/novel-agent/write-stream` | 生成 Agent 蓝图并等待用户确认，不修改项目内容 |
 | Agent | POST | `/api/v1/projects/{pid}/novel-agent/write-execute-stream` | 用户确认后执行 Agent 蓝图 |
+| Agent | POST | `/api/v1/projects/{pid}/novel-agent/chat-turn-stream` | Codex 式对话创作：逐步确认大纲、人物、场景、章节和质量策略 |
 | Agent | POST | `/api/v1/projects/{pid}/novel-agent/continue-stream` | 生成续写改编 Plan 并等待用户确认，不修改章节 |
 | Agent | POST | `/api/v1/projects/{pid}/novel-agent/continue-execute-stream` | 用户确认后执行续写与打磨 Plan |
 | Agent | GET / POST | `/api/v1/projects/{pid}/novel-agent/sessions` | 查询或新建 Agent Session |
@@ -423,4 +430,4 @@ rm data/novel_agent.db
 | `docs/data-model.md` | 数据模型：ER 图、表字段、级联规则、索引 |
 | `docs/troubleshooting.md` | 常见问题与已知 bug 复盘 |
 | `docs/audiobook.md` | 有声书服务接入、ComfyUI 工作流和任务说明 |
-| `docs/novel-agent.md` | Agent 生成、续写改编、Session 持久化和扩展说明 |
+| `docs/novel-agent.md` | Agent 生成、对话创作、续写改编、Session 持久化和扩展说明 |

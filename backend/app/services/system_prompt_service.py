@@ -490,7 +490,7 @@ class SystemPromptService:
         self, definition: PromptDefinition, row: SystemPromptSetting | None
     ) -> SystemPromptSettingResponse:
         is_custom = bool(row and row.is_custom)
-        value = row.value if row else definition.default_value
+        value = row.value if is_custom else definition.default_value
         effective_value = value if is_custom else definition.default_value
         return SystemPromptSettingResponse(
             key=definition.key,

@@ -673,9 +673,9 @@ App
 |------|------|
 | 流式输出 | SSE 流式传输，首字延迟 < 500ms |
 | 上下文压缩 | 长文本自动摘要，减少 Token 消耗 |
-| 请求缓存 | 相同 Prompt 短时间内返回缓存结果 |
+| 前缀缓存适配 | 稳定 system/小说圣经前缀提高 DeepSeek/OpenAI 等供应商的 Prompt Cache 命中；项目不缓存并复用小说正文结果 |
 | 并行请求 | 一致性分析多维度并行调用 LLM |
-| 智能重试 | 指数退避重试，最大 3 次 |
+| 严格终态 | Responses 流必须收到 completed/incomplete/failed/cancelled，防止把截断正文保存为成功 |
 
 ### 8.2 前端性能优化
 
@@ -711,9 +711,11 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def stream_completion(self, messages, **kwargs) -> AsyncIterator[str]: ...
+
+    async def response(self, messages, **kwargs) -> LLMResult: ...
 ```
 
-内置实现：`DeepSeekProvider`、`OpenAICompatibleProvider`（兼容所有 OpenAI API 格式的服务）。
+内置实现：`DeepSeekProvider`、`OpenAIProvider`、`AnthropicProvider`、`GoogleProvider` 和保守使用 Chat Completions 的 `OpenAICompatibleProvider`。统一结果保留文本、语义 output items、tool calls、finish status 与 input/output/cached/reasoning token 用量。
 
 ### 9.2 编辑器扩展
 

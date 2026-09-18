@@ -963,7 +963,7 @@ POST /api/v1/projects/{project_id}/novel-agent/write
 | word_count_target | integer | 否 | 目标总字数，默认 300000 |
 | write_chapter_count | integer | 否 | 自动生成正文的章节数，默认 3；为 0 时只生成结构 |
 | update_project | boolean | 否 | 是否用 Agent 蓝图更新项目名称、简介、题材等，默认 true |
-| use_deepseek_responses_api | boolean | 否 | DeepSeek 且模型为 `deepseek-v4-flash` 时优先使用 Responses API |
+| use_deepseek_responses_api | boolean | 否 | DeepSeek V4 Flash / Pro 是否使用 Responses API，默认 true；false 时显式回退 Chat Completions |
 
 **请求示例**：
 
@@ -1030,7 +1030,7 @@ Content-Type: application/json
 
 ### 5.11 Agent Session 管理
 
-Session 用于按项目和 Agent 模式持久化请求、Plan、步骤、结果与错误。支持的模式为 `generate` 和 `continue_edit`。
+Session 用于按项目和 Agent 模式持久化请求、Plan、步骤、结果与错误。支持的模式为 `generate`、`chat_generate` 和 `continue_edit`。
 
 ```http
 GET    /api/v1/projects/{project_id}/novel-agent/sessions?mode=generate
@@ -1058,6 +1058,39 @@ DELETE /api/v1/projects/{project_id}/novel-agent/sessions/{session_id}
 ```
 
 Session 状态包括 `idle`、`planning`、`awaiting_confirmation`、`running`、`completed`、`failed`。删除 Session 只删除运行记录，不回滚 Agent 已创建或修改的项目内容。
+
+#### 5.11.1 对话创作回合
+
+```http
+POST /api/v1/projects/{project_id}/novel-agent/chat-turn-stream
+```
+
+请求使用或自动创建 `mode=chat_generate` 的 Session。初始 `message` 是小说创意；后续通过 `answers` 回答当前问题卡：
+
+```json
+{
+  "session_id": null,
+  "llm_config_id": "LLM 配置 ID",
+  "message": "一名修表匠发现时间会从旧钟里泄漏",
+  "answers": []
+}
+```
+
+回答示例：
+
+```json
+{
+  "session_id": "Agent Session ID",
+  "llm_config_id": "LLM 配置 ID",
+  "answers": [
+    {"question_id": "character_scope:3:1", "option_id": "core_cast"}
+  ]
+}
+```
+
+事件类型包括 `session`、`message`、`question`、`artifact`、`progress`、`result`、`error` 和 `done`。每个 question 包含 2–3 个 options、唯一 `recommended=true` 项、`allow_custom` 和 `state_version`。流程先单独生成并确认核心设定与创作规则，再按一卷一次生成、组装并确认分卷大纲；随后依次确认人物、场景、章节，选择单章/多章/全部章节，并在正文开始前确认一致性分析与自动打磨策略。
+
+完整状态保存在 `request_payload.chat_state`；客户端刷新后应通过 Session 读取并恢复 `messages`、`pending_questions`、`artifacts` 和 `execution`。长时间生成前会额外保存 `inflight_turn` 与恢复问题；分卷大纲每完成一卷、批量正文每完成一章都会刷新检查点。任务失败或连接中断后，客户端展示该问题即可继续剩余分卷/章节或返回上一选择，无需创建新 Session。
 
 ### 5.12 Agent 续写改编
 
@@ -1454,7 +1487,7 @@ POST /api/v1/llm-configs
 
 | provider | 默认 Base URL | 推荐模型 | 请求格式 |
 |----------|---------------|----------|----------|
-| `deepseek` | `https://api.deepseek.com` | `deepseek-v4-pro` | OpenAI Chat Completions `messages[]` |
+| `deepseek` | `https://api.deepseek.com` | `deepseek-v4-pro` | Responses API `instructions` + `input[]`（可显式回退 Chat Completions） |
 | `openai` | `https://api.openai.com/v1` | `gpt-5.5` | Responses API `instructions` + `input[]` |
 | `anthropic` | `https://api.anthropic.com/v1` | `claude-sonnet-4-6` / `claude-opus-4-8` / `claude-haiku-4-5` | Messages API `system` + `messages[]` |
 | `google` | `https://generativelanguage.googleapis.com/v1beta` | `gemini-3.5-flash` / `gemini-3.1-pro` | Gemini `systemInstruction` + `contents[]` |

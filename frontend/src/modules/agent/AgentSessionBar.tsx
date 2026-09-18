@@ -6,6 +6,7 @@ import type { NovelAgentSession } from '@/types'
 interface AgentSessionBarProps {
   sessions: NovelAgentSession[]
   activeSession: NovelAgentSession | null
+  className?: string
   busy?: boolean
   onSelect: (sessionId: string) => void
   onCreate: () => void
@@ -73,6 +74,7 @@ const SessionRenameEditor: React.FC<{
 export const AgentSessionBar: React.FC<AgentSessionBarProps> = ({
   sessions,
   activeSession,
+  className,
   busy,
   onSelect,
   onCreate,
@@ -80,7 +82,9 @@ export const AgentSessionBar: React.FC<AgentSessionBarProps> = ({
   onDelete,
 }) => {
   return (
-    <div className="rounded-md border bg-white p-4 shadow-sm">
+    <div
+      className={`rounded-md border border-gray-200 bg-white p-4 shadow-sm ${className || ''}`}
+    >
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-sm font-medium text-gray-700">Agent Session</div>
         <select

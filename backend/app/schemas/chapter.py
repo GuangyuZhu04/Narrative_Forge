@@ -1,6 +1,24 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+class ChapterHighlight(BaseModel):
+    id: str = Field(..., min_length=1, max_length=100)
+    start: int = Field(..., ge=0)
+    end: int = Field(..., gt=0)
+    text: str = Field(..., min_length=1, max_length=100000)
+    prefix: str = Field("", max_length=24)
+    suffix: str = Field("", max_length=24)
+    color: Literal["yellow", "green", "blue", "pink"]
+
+    @field_validator("end")
+    @classmethod
+    def end_follows_start(cls, value, info):
+        if value <= info.data.get("start", 0):
+            raise ValueError("Highlight end must follow start")
+        return value
 
 
 class ChapterCreate(BaseModel):
@@ -11,6 +29,7 @@ class ChapterCreate(BaseModel):
 
 
 class ChapterUpdate(BaseModel):
+    highlights: list[ChapterHighlight] = Field(default_factory=list)
     title: str | None = None
     content: str | None = None
     summary: str | None = None
@@ -21,6 +40,7 @@ class ChapterUpdate(BaseModel):
 
 
 class ChapterResponse(BaseModel):
+    highlights: list[ChapterHighlight] = Field(default_factory=list)
     id: str
     project_id: str
     outline_node_id: str | None

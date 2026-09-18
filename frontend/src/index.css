@@ -4,10 +4,68 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(
+    --app-font-family,
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Microsoft YaHei', sans-serif
+  );
+  font-size: var(--app-font-size, 16px);
+  background-color: #f9fafb;
+  background-image: var(--app-wallpaper-image, none);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-attachment: fixed;
 }
 
 #root {
   width: 100%;
   min-height: 100vh;
+}
+
+body.wallpaper-active .bg-gray-50 {
+  background-color: rgb(249 250 251 / 0.78);
+}
+
+body.wallpaper-active .app-wallpaper-root.bg-gray-50 {
+  background-color: rgb(249 250 251 / 0.3);
+}
+
+/*
+ * Page-level panels stay translucent so every column reveals the single,
+ * viewport-fixed wallpaper on body. Keep this opt-in: cards, inputs and
+ * dialogs still use their normal solid backgrounds for readability.
+ */
+body.wallpaper-active .app-wallpaper-canvas.bg-gray-50 {
+  background-color: rgb(249 250 251 / 0.3);
+}
+
+body.wallpaper-active .app-wallpaper-surface {
+  background-color: rgb(255 255 255 / 0.62);
+  -webkit-backdrop-filter: blur(8px) saturate(0.9);
+  backdrop-filter: blur(8px) saturate(0.9);
+}
+
+body .text-xs {
+  font-size: var(--app-text-xs, 12px);
+}
+
+body .text-sm {
+  font-size: var(--app-text-sm, 14px);
+}
+
+body .text-base {
+  font-size: var(--app-text-base, 16px);
+}
+
+body .text-lg,
+body .prose-lg {
+  font-size: var(--app-text-lg, 18px);
+}
+
+body .text-xl {
+  font-size: var(--app-text-xl, 20px);
+}
+
+body .text-2xl {
+  font-size: var(--app-text-2xl, 24px);
 }

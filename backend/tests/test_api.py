@@ -1,13 +1,16 @@
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.main import app
+from app.api.v1.novel_agent import _error_message
 from app.llm.output_limits import DEEPSEEK_V4_MAX_OUTPUT_TOKENS
+from app.models.agent_session import NovelAgentSession
 from app.models.base import Base
 from app.models.character import CharacterRelationship
 from app.db.session import get_db
@@ -70,6 +73,234 @@ async def execute_agent_session(
         json={"session_id": session_id},
     )
     return response, parse_sse_events(response)
+
+
+def test_agent_error_message_keeps_sanitized_upstream_http_detail():
+    request = httpx.Request("POST", "https://api.deepseek.com/responses")
+    response = httpx.Response(
+        400,
+        request=request,
+        json={"error": {"message": "Invalid schema keyword: maxLength"}},
+    )
+    error = httpx.HTTPStatusError(
+        "Bad Request", request=request, response=response
+    )
+
+    assert _error_message(error) == (
+        "上游模型 API 返回 HTTP 400：Invalid schema keyword: maxLength"
+    )
+
+
+@pytest.mark.anyio
+async def test_guided_chat_session_starts_and_persists_welcome_state():
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        project_response = await client.post(
+            "/api/v1/projects", json={"name": "对话创作测试"}
+        )
+        project_id = project_response.json()["id"]
+
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/novel-agent/chat-turn-stream",
+            json={"llm_config_id": "configured-later", "answers": []},
+        )
+
+        assert response.status_code == 200
+        events = parse_sse_events(response)
+        sessions = [item["session"] for item in events if item["type"] == "session"]
+        assert sessions[-1]["mode"] == "chat_generate"
+        assert sessions[-1]["status"] == "awaiting_input"
+        state = sessions[-1]["request_payload"]["chat_state"]
+        assert state["stage"] == "intake"
+        assert state["messages"][0]["role"] == "assistant"
+
+
+@pytest.mark.anyio
+async def test_chat_session_sync_endpoint_backfills_confirmed_outline():
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        project_response = await client.post(
+            "/api/v1/projects", json={"name": "旧会话同步测试"}
+        )
+        project_id = project_response.json()["id"]
+        session_response = await client.post(
+            f"/api/v1/projects/{project_id}/novel-agent/sessions",
+            json={"mode": "chat_generate", "name": "旧对话"},
+        )
+        session_id = session_response.json()["id"]
+
+        async with TestSessionLocal() as db:
+            session = await db.get(NovelAgentSession, session_id)
+            assert session is not None
+            session.request_payload = {
+                "chat_state": {
+                    "schema_version": "novel.agent.chat.v1",
+                    "stage": "character_scope",
+                    "state_version": 1,
+                    "messages": [],
+                    "pending_questions": [],
+                    "artifacts": {
+                        "outline": {
+                            "project": {
+                                "name": "旧钟",
+                                "description": "时间从旧钟里泄漏。",
+                                "genre": "奇幻悬疑",
+                                "word_count_target": 5000,
+                                "settings": {},
+                            },
+                            "style_guide": "克制、清晰。",
+                            "outline": {
+                                "title": "旧钟大纲",
+                                "description": "旧会话中的已确认大纲。",
+                                "children": [],
+                            },
+                        }
+                    },
+                    "confirmed": {"outline": True},
+                    "selections": {},
+                    "scale": {},
+                    "quality_policy": {},
+                    "execution": {"chapter_results": []},
+                    "structure_created": False,
+                    "result": None,
+                }
+            }
+            session.status = "awaiting_input"
+            await db.commit()
+
+        sync_response = await client.post(
+            f"/api/v1/projects/{project_id}/novel-agent/sessions/"
+            f"{session_id}/sync-confirmed-artifacts"
+        )
+        assert sync_response.status_code == 200
+        synced_state = sync_response.json()["request_payload"]["chat_state"]
+        assert synced_state["materialized_structure"]["outline_id"]
+
+        outlines_response = await client.get(
+            f"/api/v1/projects/{project_id}/outlines"
+        )
+        assert outlines_response.status_code == 200
+        outlines = outlines_response.json()["data"]
+        assert len(outlines) == 1
+        assert outlines[0]["title"] == "旧钟大纲"
+
+
+@pytest.mark.anyio
+async def test_guided_chat_failure_survives_rollback_and_marks_session_failed(
+    monkeypatch,
+):
+    persisted_steps = [
+        {
+            "step": "outline",
+            "label": "分卷级大纲",
+            "status": "running",
+            "message": "正在生成",
+        }
+    ]
+    persisted_result = {"partial": "已提交的对话创作结果"}
+
+    async def failing_chat_turn(db, project_id, session, data):
+        session.steps = persisted_steps
+        session.result = persisted_result
+        await db.commit()
+        yield {"type": "progress", "step": "outline", "message": "正在生成"}
+        raise NovelAgentOutputError("Agent 生成未返回蓝图内容")
+
+    monkeypatch.setattr(
+        "app.api.v1.novel_agent.novel_agent_chat_service.handle_turn_stream",
+        failing_chat_turn,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        project_response = await client.post(
+            "/api/v1/projects", json={"name": "对话创作异常测试"}
+        )
+        project_id = project_response.json()["id"]
+        session_response = await client.post(
+            f"/api/v1/projects/{project_id}/novel-agent/sessions",
+            json={"mode": "chat_generate", "name": "异常会话"},
+        )
+        session_id = session_response.json()["id"]
+
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/novel-agent/chat-turn-stream",
+            json={
+                "session_id": session_id,
+                "llm_config_id": "configured-later",
+                "message": "继续生成大纲",
+                "answers": [],
+            },
+        )
+
+        assert response.status_code == 200
+        events = parse_sse_events(response)
+        assert events[-1] == {
+            "type": "error",
+            "error": "Agent 生成未返回蓝图内容",
+        }
+
+        persisted_session = await client.get(
+            f"/api/v1/projects/{project_id}/novel-agent/sessions/{session_id}"
+        )
+        session_data = persisted_session.json()
+        assert session_data["status"] == "failed"
+        assert session_data["error_message"] == "Agent 生成未返回蓝图内容"
+        assert session_data["steps"] == persisted_steps
+        assert session_data["result"] == persisted_result
+
+
+@pytest.mark.anyio
+async def test_guided_chat_failure_yields_error_when_failure_persistence_fails(
+    monkeypatch,
+):
+    async def failing_chat_turn(db, project_id, session, data):
+        yield {"type": "progress", "step": "outline", "message": "正在生成"}
+        raise NovelAgentOutputError("Agent 生成未返回蓝图内容")
+
+    async def failing_fail_run(*args, **kwargs):
+        raise RuntimeError("failed to persist failure state")
+
+    monkeypatch.setattr(
+        "app.api.v1.novel_agent.novel_agent_chat_service.handle_turn_stream",
+        failing_chat_turn,
+    )
+    monkeypatch.setattr(
+        "app.api.v1.novel_agent.novel_agent_session_service.fail_run",
+        failing_fail_run,
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        project_response = await client.post(
+            "/api/v1/projects", json={"name": "对话创作失败兜底测试"}
+        )
+        project_id = project_response.json()["id"]
+        session_response = await client.post(
+            f"/api/v1/projects/{project_id}/novel-agent/sessions",
+            json={"mode": "chat_generate", "name": "失败兜底会话"},
+        )
+        session_id = session_response.json()["id"]
+
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/novel-agent/chat-turn-stream",
+            json={
+                "session_id": session_id,
+                "llm_config_id": "configured-later",
+                "message": "继续生成大纲",
+                "answers": [],
+            },
+        )
+
+        assert response.status_code == 200
+        assert parse_sse_events(response)[-1] == {
+            "type": "error",
+            "error": "Agent 生成未返回蓝图内容",
+        }
 
 
 @pytest.mark.anyio
@@ -241,6 +472,41 @@ async def test_create_llm_config():
         assert data["provider"] == "deepseek"
         assert data["api_key_encrypted"] == "****masked****"
         assert data["is_active"] is True
+
+
+@pytest.mark.anyio
+async def test_update_and_delete_llm_config_invalidate_provider_cache(monkeypatch):
+    invalidated: list[str] = []
+    from app.api.v1 import llm_config as llm_config_api
+
+    monkeypatch.setattr(
+        llm_config_api.llm_orchestrator,
+        "invalidate",
+        invalidated.append,
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        created = await client.post(
+            "/api/v1/llm-configs",
+            json={
+                "provider": "deepseek",
+                "api_key": "sk-test-key",
+                "base_url": "https://api.deepseek.com",
+                "model_name": "deepseek-v4-pro",
+            },
+        )
+        config_id = created.json()["id"]
+
+        updated = await client.put(
+            f"/api/v1/llm-configs/{config_id}",
+            json={"model_name": "deepseek-v4-flash"},
+        )
+        deleted = await client.delete(f"/api/v1/llm-configs/{config_id}")
+
+    assert updated.status_code == 200
+    assert deleted.status_code == 204
+    assert invalidated == [config_id, config_id]
 
 
 @pytest.mark.anyio
@@ -686,7 +952,7 @@ async def test_novel_agent_repairs_blueprint_missing_outline(monkeypatch):
                 "provider": "deepseek",
                 "api_key": "test-key",
                 "base_url": "https://api.deepseek.com",
-                "model_name": "deepseek-v4-flash",
+                "model_name": "deepseek-v4-pro",
             },
         )
         llm_config_id = llm_config_response.json()["id"]
@@ -725,6 +991,74 @@ async def test_novel_agent_repairs_blueprint_missing_outline(monkeypatch):
         "全书所有卷合计必须恰好生成 5 个 CHAPTER"
         in calls[1]["messages"][1]["content"]
     )
+
+
+@pytest.mark.anyio
+async def test_novel_agent_v4_pro_can_explicitly_fall_back_to_chat(monkeypatch):
+    blueprint = {
+        "project": {"name": "回退测试"},
+        "outline": {
+            "title": "回退测试大纲",
+            "description": "",
+            "children": [
+                {
+                    "node_type": "VOLUME",
+                    "title": "第一卷",
+                    "summary": "",
+                    "children": [
+                        {
+                            "node_type": "CHAPTER",
+                            "title": "第一章",
+                            "summary": "",
+                            "children": [],
+                        }
+                    ],
+                }
+            ],
+        },
+        "characters": [],
+        "scenes": [],
+        "agent_plan": [],
+    }
+    calls: list[dict] = []
+
+    async def fake_chat(config_id, messages, **kwargs):
+        calls.append(kwargs)
+        return json.dumps(blueprint, ensure_ascii=False)
+
+    monkeypatch.setattr(
+        "app.services.novel_agent_service.llm_orchestrator.chat", fake_chat
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        llm_config_response = await client.post(
+            "/api/v1/llm-configs",
+            json={
+                "provider": "deepseek",
+                "api_key": "test-key",
+                "base_url": "https://api.deepseek.com",
+                "model_name": "deepseek-v4-pro",
+            },
+        )
+        project_response = await client.post(
+            "/api/v1/projects", json={"name": "Responses 回退测试"}
+        )
+        response = await client.post(
+            f"/api/v1/projects/{project_response.json()['id']}/novel-agent/write-stream",
+            json={
+                "llm_config_id": llm_config_response.json()["id"],
+                "idea": "测试显式 Chat 回退。",
+                "volume_count": 1,
+                "chapter_count": 1,
+                "write_chapter_count": 0,
+                "use_deepseek_responses_api": False,
+            },
+        )
+
+    assert response.status_code == 200
+    assert calls[0]["api_mode"] == "chat_completions"
 
 
 @pytest.mark.anyio

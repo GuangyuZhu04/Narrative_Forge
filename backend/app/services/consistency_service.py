@@ -21,6 +21,7 @@ from app.models.analysis import AnalysisReport
 from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.outline import Outline, OutlineNode
+from app.models.project import Project
 from app.services.llm_orchestrator import llm_orchestrator
 from app.services.system_prompt_service import (
     CONSISTENCY_ANALYSIS_TEMPERATURE_KEY,
@@ -91,11 +92,19 @@ class ConsistencyService:
         task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         results = {}
+        failed_dimensions: set[str] = set()
         for dim, result in zip(normalized_dimensions, task_results):
             if isinstance(result, Exception):
-                results[dim] = {"issues": [], "suggestions": [], "score": None}
+                failed_dimensions.add(dim)
+                results[dim] = {
+                    "issues": [],
+                    "suggestions": [],
+                    "score": None,
+                    "status": "failed",
+                    "error": "模型调用或结构化结果校验失败",
+                }
             else:
-                results[dim] = result
+                results[dim] = {**result, "status": "completed"}
 
         existing_reports = list(
             (
@@ -118,7 +127,7 @@ class ConsistencyService:
                     project_id=project_id,
                     chapter_id=chapter_id,
                     analysis_type=dim,
-                    status="completed",
+                    status=("failed" if dim in failed_dimensions else "completed"),
                     issues=result.get("issues", []),
                     suggestions=result.get("suggestions", []),
                     score=result.get("score"),
@@ -184,6 +193,15 @@ class ConsistencyService:
         self, db: AsyncSession, project_id: str, chapter: Chapter
     ) -> dict:
         chapter_info = await self._get_chapter_info(db, chapter)
+        project = await db.get(Project, project_id)
+        settings: dict = {}
+        if project and project.settings:
+            try:
+                parsed_settings = json.loads(project.settings)
+                if isinstance(parsed_settings, dict):
+                    settings = parsed_settings
+            except (TypeError, json.JSONDecodeError):
+                settings = {}
         previous_sources = await self._get_neighbor_sources(
             db, project_id, chapter, before=True, limit=3
         )
@@ -194,6 +212,32 @@ class ConsistencyService:
             "chapter_content": chapter.content or "",
             "chapter_title": chapter_info["title"],
             "chapter_summary": chapter_info["summary"] or "暂无章节摘要",
+            "chapter_contract": json.dumps(
+                (
+                    chapter_info["node"].metadata_
+                    if chapter_info.get("node") and chapter_info["node"].metadata_
+                    else {}
+                ),
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "novel_bible": json.dumps(
+                {
+                    key: settings.get(key)
+                    for key in (
+                        "logline",
+                        "core_promise",
+                        "theme",
+                        "world_rules",
+                        "long_term_hooks",
+                        "ending_direction",
+                        "story_state",
+                    )
+                    if settings.get(key) is not None
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
             "previous_summary": self._format_sources(previous_sources),
             "previous_chapter_context": self._format_single_source(
                 previous_sources[-1] if previous_sources else None
@@ -275,7 +319,7 @@ class ConsistencyService:
             else:
                 neighbors = rows[current_index + 1 : current_index + 1 + limit]
             return [
-                self._build_chapter_source(neighbor_chapter, node)
+                self._build_chapter_source(neighbor_chapter, node, tail=before)
                 for neighbor_chapter, node in neighbors
             ]
 
@@ -293,20 +337,29 @@ class ConsistencyService:
         neighbors = list((await db.execute(chapter_query)).scalars().all())
         if before:
             neighbors.reverse()
-        return [self._build_chapter_source(item, None) for item in neighbors]
+        return [
+            self._build_chapter_source(item, None, tail=before)
+            for item in neighbors
+        ]
 
     def _build_chapter_source(
-        self, chapter: Chapter | None, node: OutlineNode | None
+        self,
+        chapter: Chapter | None,
+        node: OutlineNode | None,
+        *,
+        tail: bool = False,
     ) -> dict[str, str]:
         title = node.title if node else None
         summary = node.summary if node else None
         if chapter:
             title = title or chapter.title
             summary = summary or chapter.summary
+        content = ((chapter.content if chapter else "") or "").strip()
+        excerpt = content[-3000:] if tail else content[:3000]
         return {
             "title": title or "未命名章节",
             "summary": (summary or "").strip(),
-            "content": ((chapter.content if chapter else "") or "").strip()[:3000],
+            "content": excerpt,
         }
 
     def _format_sources(self, sources: list[dict[str, str]]) -> str:
@@ -355,8 +408,12 @@ class ConsistencyService:
         return "\n\n".join(
             (
                 f"姓名：{c.name}\n"
-                f"性格：{c.personality if c.personality else '暂无'}\n"
-                f"人物小传：{c.biography or '暂无'}"
+                f"别名：{c.aliases or '暂无'}\n"
+                f"基本信息：{c.basic_info or '暂无'}\n"
+                f"性格与动机：{c.personality or '暂无'}\n"
+                f"成长弧：{c.growth_arc or '暂无'}\n"
+                f"人物小传：{c.biography or '暂无'}\n"
+                f"备注与边界：{c.notes or '暂无'}"
             )
             for c in characters
         )
@@ -375,7 +432,23 @@ class ConsistencyService:
             temperature=temperature,
             **json_object_response_kwargs(),
         )
-        return json.loads(response)
+        parsed = json.loads(response)
+        if not isinstance(parsed, dict):
+            raise ValueError("一致性分析结果必须是 JSON 对象")
+        issues = parsed.get("issues")
+        suggestions = parsed.get("suggestions")
+        score = parsed.get("score")
+        if not isinstance(issues, list) or not isinstance(suggestions, list):
+            raise ValueError("一致性分析缺少 issues 或 suggestions 数组")
+        if score is not None and (
+            not isinstance(score, (int, float)) or not 0 <= score <= 100
+        ):
+            raise ValueError("一致性评分必须在 0 到 100 之间")
+        return {
+            "issues": [item for item in issues if isinstance(item, dict)],
+            "suggestions": suggestions,
+            "score": score,
+        }
 
     async def stream_analyze(
         self,

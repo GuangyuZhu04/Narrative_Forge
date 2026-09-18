@@ -1,4 +1,4 @@
-from sqlalchemy import String, Text, Integer, ForeignKey
+from sqlalchemy import String, Text, Integer, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, UUIDMixin
@@ -16,6 +16,7 @@ class Chapter(UUIDMixin, TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(300))
     content: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
+    highlights: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="draft")
     word_count: Mapped[int] = mapped_column(Integer, default=0)

@@ -137,7 +137,7 @@ export const NovelAgent: React.FC = () => {
   const [styleRequirements, setStyleRequirements] = useState('')
   const [extraRequirements, setExtraRequirements] = useState('')
   const [volumeCount, setVolumeCount] = useState('3')
-  const [chapterCount, setChapterCount] = useState('12')
+  const [chapterCount, setChapterCount] = useState('30')
   const [wordCountTarget, setWordCountTarget] = useState('300000')
   const [writeChapterCount, setWriteChapterCount] = useState('3')
   const [updateProject, setUpdateProject] = useState(true)
@@ -293,7 +293,7 @@ export const NovelAgent: React.FC = () => {
         style_requirements: styleRequirements.trim() || null,
         extra_requirements: extraRequirements.trim() || null,
         volume_count: numberValue(volumeCount, 3),
-        chapter_count: numberValue(chapterCount, 12),
+        chapter_count: numberValue(chapterCount, 30),
         word_count_target: numberValue(wordCountTarget, 300000),
         write_chapter_count: numberValue(writeChapterCount, 3),
         update_project: updateProject,
@@ -536,7 +536,7 @@ export const NovelAgent: React.FC = () => {
     : null
 
   return (
-    <div className="min-h-full bg-gray-50 p-6">
+    <div className="app-wallpaper-canvas min-h-full bg-gray-50 p-6">
       <div className="mx-auto flex max-w-7xl flex-col gap-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -704,7 +704,7 @@ export const NovelAgent: React.FC = () => {
                     disabled={loading}
                     className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
-                  DeepSeek Responses
+                  DeepSeek V4 Responses（Flash / Pro；关闭则使用 Chat）
                 </label>
               </div>
 

@@ -8,6 +8,7 @@ import { SceneManager } from '@/modules/scene/SceneManager'
 import { ChapterEditor } from '@/modules/chapter/ChapterEditor'
 import { NovelContent } from '@/modules/novel/NovelContent'
 import { NovelAgent } from '@/modules/agent/NovelAgent'
+import { NovelAgentChat } from '@/modules/agent/NovelAgentChat'
 import { AgentContinue } from '@/modules/agent/AgentContinue'
 import { NovelDiscussion } from '@/modules/discussion/NovelDiscussion'
 import { ConsistencyReport } from '@/modules/consistency/ConsistencyReport'
@@ -24,6 +25,7 @@ const App: React.FC = () => {
           <Route path="outline" element={<OutlineEditor />} />
           <Route path="characters" element={<CharacterManager />} />
           <Route path="scenes" element={<SceneManager />} />
+          <Route path="agent-chat" element={<NovelAgentChat />} />
           <Route path="agent" element={<NovelAgent />} />
           <Route path="agent-continue" element={<AgentContinue />} />
           <Route path="chapters/:chapterId" element={<ChapterEditor />} />

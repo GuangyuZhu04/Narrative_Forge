@@ -1,5 +1,11 @@
 # Windows EXE 使用说明
 
+2026-09-10 更新：加入文字高亮和阅读模式，支持阅读主题、排版、目录搜索、书签、进度记忆和按屏翻页。旧数据库自动增加章节标注字段。使用方式见 [文字高亮与阅读模式](docs/reading-highlights.md)。
+
+2026-09-09 更新：同步新版系统提示词，并修复桌面包首页及工作区深层链接返回 404 的问题。详见 [提示词更新说明](docs/system-prompts-2026-09-09.md)。
+
+可分发压缩包为 `dist/NarrativeForge-Windows.zip`，解压后运行其中的 `NarrativeForge.exe`；同目录 `.sha256` 文件用于校验压缩包及 EXE。
+
 构建产物位于：
 
 ```text
@@ -34,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-exe.ps1
 
 如果 `frontend/node_modules` 已存在但缺少 `tsc` 或 `vite`，脚本会自动使用 `npm ci` 重新安装前端依赖，避免依赖目录残缺导致打包失败。
 
-打包后的 exe 会内置 `frontend/dist`，启动时由本地 FastAPI 服务直接提供前端页面。
+打包后的 exe 会内置 `frontend/dist`，启动时挂载到本地 FastAPI 服务。首页、设置页和项目工作区的直接访问及刷新均可返回前端页面；不存在的 API 和资源仍返回 404。
 
 ## 可选环境变量
 

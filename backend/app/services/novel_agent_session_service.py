@@ -184,6 +184,32 @@ class NovelAgentSessionService:
         self._touch(session)
         await db.commit()
 
+    async def save_chat_state(
+        self,
+        db: AsyncSession,
+        session: NovelAgentSession,
+        chat_state: dict[str, Any],
+        *,
+        status: str = "awaiting_input",
+        plan: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> NovelAgentSession:
+        """Persist a guided-chat checkpoint without losing its message history."""
+        payload = dict(session.request_payload or {})
+        payload["workflow_version"] = 1
+        payload["chat_state"] = deepcopy(chat_state)
+        session.request_payload = payload
+        session.status = status
+        if plan is not None:
+            session.plan = deepcopy(plan)
+        if result is not None:
+            session.result = deepcopy(result)
+        session.error_message = None
+        self._touch(session)
+        await db.commit()
+        await db.refresh(session)
+        return session
+
     async def complete_run(
         self,
         db: AsyncSession,

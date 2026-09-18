@@ -1,10 +1,20 @@
 import json
-from typing import AsyncIterator
+from copy import deepcopy
+from typing import Any, AsyncIterator
 
 import httpx
 
-from .base import LLMContentFilteredError, LLMOutputTruncatedError, LLMProvider
 from app.core.security import decrypt_api_key
+from app.llm.contracts import (
+    LLMFinishStatus,
+    LLMResult,
+    LLMStreamEvent,
+    LLMToolCall,
+    LLMUsage,
+)
+from app.llm.responses import pop_output_format
+
+from .base import LLMContentFilteredError, LLMOutputTruncatedError, LLMProvider
 
 
 class AnthropicProvider(LLMProvider):
@@ -27,6 +37,9 @@ class AnthropicProvider(LLMProvider):
         "metadata",
         "thinking",
         "service_tier",
+        "tools",
+        "tool_choice",
+        "output_config",
     }
 
     def __init__(self, config: dict):
@@ -36,7 +49,7 @@ class AnthropicProvider(LLMProvider):
         self.base_url = (config.get("base_url") or self.API_BASE).rstrip("/")
         self.default_params = config.get("default_params") or {}
 
-    async def chat_completion(self, messages: list[dict], **kwargs) -> str:
+    async def response(self, messages: list[dict], **kwargs) -> LLMResult:
         payload = self._build_payload(messages, stream=False, **kwargs)
         async with httpx.AsyncClient(timeout=self.CHAT_TIMEOUT) as client:
             resp = await client.post(
@@ -47,11 +60,21 @@ class AnthropicProvider(LLMProvider):
             resp.raise_for_status()
             data = resp.json()
             self._raise_for_stop_reason(data.get("stop_reason"))
-            return self._extract_text(data)
+            return self._parse_result(data)
+
+    async def chat_completion(self, messages: list[dict], **kwargs) -> str:
+        return (await self.response(messages, **kwargs)).text
 
     async def stream_completion(
         self, messages: list[dict], **kwargs
     ) -> AsyncIterator[str]:
+        async for event in self.stream_completion_events(messages, **kwargs):
+            if event.get("type") == "content":
+                yield event.get("content", "")
+
+    async def stream_completion_events(
+        self, messages: list[dict], **kwargs
+    ) -> AsyncIterator[LLMStreamEvent]:
         payload = self._build_payload(messages, stream=True, **kwargs)
         async with httpx.AsyncClient(timeout=self.STREAM_TIMEOUT) as client:
             async with client.stream(
@@ -62,18 +85,53 @@ class AnthropicProvider(LLMProvider):
             ) as resp:
                 resp.raise_for_status()
                 last_stop_reason = None
+                input_tokens = 0
+                output_tokens = 0
+                cached_input_tokens = 0
                 async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
+                    if not line.startswith("data:"):
                         continue
-                    event = json.loads(line[6:])
+                    event = json.loads(line[5:].lstrip())
                     event_type = event.get("type")
-                    if event_type == "content_block_delta":
+                    if event_type == "message_start":
+                        usage = (event.get("message") or {}).get("usage") or {}
+                        input_tokens = int(usage.get("input_tokens") or 0)
+                        cached_input_tokens = int(
+                            usage.get("cache_read_input_tokens") or 0
+                        )
+                    elif event_type == "content_block_delta":
                         delta = event.get("delta") or {}
                         if delta.get("type") == "text_delta" and delta.get("text"):
-                            yield delta["text"]
+                            yield {"type": "content", "content": delta["text"]}
+                        elif delta.get("type") in {
+                            "thinking_delta",
+                            "signature_delta",
+                        } and delta.get("thinking"):
+                            yield {
+                                "type": "thinking",
+                                "content": delta["thinking"],
+                            }
                     elif event_type == "message_delta":
                         delta = event.get("delta") or {}
                         last_stop_reason = delta.get("stop_reason") or last_stop_reason
+                        usage = event.get("usage") or {}
+                        output_tokens = int(
+                            usage.get("output_tokens") or output_tokens
+                        )
+                    elif event_type == "message_stop":
+                        usage = LLMUsage(
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            cached_input_tokens=cached_input_tokens,
+                        )
+                        yield {
+                            "type": "usage",
+                            "content": "",
+                            "usage": usage.to_dict(),
+                            "finish_status": self._finish_status(
+                                last_stop_reason
+                            ).value,
+                        }
                     elif event_type == "error":
                         error = event.get("error") or {}
                         raise RuntimeError(error.get("message") or "Anthropic stream failed")
@@ -95,6 +153,17 @@ class AnthropicProvider(LLMProvider):
         }
         if system:
             payload["system"] = system
+        output_format = pop_output_format(params)
+        if output_format:
+            # Anthropic accepts only json_schema here.  A portable json_object
+            # request must fall back to the prompt instead of sending an
+            # invalid output_config.format type and receiving HTTP 400.
+            params.pop("output_config", None)
+            if output_format.get("type") == "json_schema":
+                output_config: dict[str, Any] = {
+                    "format": self._anthropic_output_format(output_format)
+                }
+                params["output_config"] = output_config
         payload.update(
             {
                 key: value
@@ -128,6 +197,74 @@ class AnthropicProvider(LLMProvider):
             if block.get("type") == "text" and block.get("text"):
                 chunks.append(block["text"])
         return "".join(chunks)
+
+    def _parse_result(self, data: dict[str, Any]) -> LLMResult:
+        output_items: list[dict[str, Any]] = []
+        tool_calls: list[LLMToolCall] = []
+        for block in data.get("content") or []:
+            block_type = block.get("type")
+            if block_type == "text":
+                output_items.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {"type": "output_text", "text": block.get("text") or ""}
+                        ],
+                    }
+                )
+            elif block_type == "thinking":
+                output_items.append(
+                    {
+                        "type": "reasoning",
+                        "content": deepcopy(block),
+                    }
+                )
+            elif block_type == "tool_use":
+                arguments = json.dumps(
+                    block.get("input") or {}, ensure_ascii=False, separators=(",", ":")
+                )
+                tool_call = LLMToolCall(
+                    id=str(block.get("id") or ""),
+                    name=str(block.get("name") or ""),
+                    arguments=arguments,
+                )
+                tool_calls.append(tool_call)
+                output_items.append(tool_call.to_response_item())
+        usage_data = data.get("usage") or {}
+        usage = LLMUsage(
+            input_tokens=int(usage_data.get("input_tokens") or 0),
+            output_tokens=int(usage_data.get("output_tokens") or 0),
+            cached_input_tokens=int(usage_data.get("cache_read_input_tokens") or 0),
+        )
+        return LLMResult(
+            text=self._extract_text(data),
+            output_items=output_items,
+            tool_calls=tool_calls,
+            usage=usage,
+            finish_status=self._finish_status(data.get("stop_reason")),
+            response_id=data.get("id"),
+            model=data.get("model") or self.model,
+        )
+
+    @staticmethod
+    def _anthropic_output_format(output_format: dict[str, Any]) -> dict[str, Any]:
+        if output_format.get("type") != "json_schema":
+            return output_format
+        return {
+            "type": "json_schema",
+            "schema": output_format.get("schema") or {},
+        }
+
+    @staticmethod
+    def _finish_status(stop_reason: str | None) -> LLMFinishStatus:
+        if stop_reason == "tool_use":
+            return LLMFinishStatus.TOOL_CALLS
+        if stop_reason == "max_tokens":
+            return LLMFinishStatus.INCOMPLETE
+        if stop_reason in {"refusal", "content_filter"}:
+            return LLMFinishStatus.CANCELLED
+        return LLMFinishStatus.COMPLETED if stop_reason else LLMFinishStatus.UNKNOWN
 
     def _raise_for_stop_reason(self, stop_reason: str | None) -> None:
         if stop_reason == "max_tokens":

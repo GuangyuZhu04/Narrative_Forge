@@ -1,14 +1,19 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { useParams } from 'react-router-dom'
+import { useLocation, useParams } from 'react-router-dom'
 import {
   analysisApi,
   chapterApi,
   getActiveLLMConfigId,
 } from '@/services/api'
-import { useOutlineStore } from '@/stores/outlineStore'
+import {
+  refreshProjectOutlineData,
+  useOutlineStore,
+} from '@/stores/outlineStore'
 import {
   CHAPTER_CONTENT_UPDATED_EVENT,
+  CHAPTERS_CHANGED_EVENT,
   type ChapterContentUpdatedDetail,
+  type ChaptersChangedDetail,
 } from '@/events/chapterEvents'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
@@ -23,6 +28,8 @@ import {
   FileText,
 } from 'lucide-react'
 import type { OutlineNode } from '@/types'
+import { HighlightedTextarea } from '@/features/reading/HighlightedTextarea'
+import { ReaderLauncher } from '@/features/reading/ReaderLauncher'
 
 interface ChapterItem {
   id: string
@@ -219,14 +226,14 @@ let toastId = 0
 
 export const NovelContent: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>()
+  const location = useLocation()
   const {
     outlines,
     currentOutline,
     currentTree: outlineTree,
-    fetchOutlines,
     fetchTree,
   } = useOutlineStore()
-  const [loadedOutlineId, setLoadedOutlineId] = useState<string | null>(null)
+  const loadedOutlineIdRef = useRef<string | null>(null)
   const [chapters, setChapters] = useState<ChapterItem[]>([])
   const [selectedChapter, setSelectedChapter] = useState<ChapterItem | null>(
     null
@@ -255,6 +262,10 @@ export const NovelContent: React.FC = () => {
     new Set()
   )
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const chapterListRequestRef = useRef(0)
+  const isActive = projectId
+    ? location.pathname === `/projects/${projectId}/novel`
+    : false
 
   const showToast = useCallback((type: ToastType, message: string) => {
     const id = ++toastId
@@ -264,34 +275,39 @@ export const NovelContent: React.FC = () => {
     }, 3000)
   }, [])
 
-  useEffect(() => {
+  const refreshChapters = useCallback(async () => {
     if (!projectId) return
-    let cancelled = false
+    const requestId = ++chapterListRequestRef.current
+    const result = (await chapterApi.list(projectId)) as unknown as {
+      data: ChapterItem[]
+    }
+    if (requestId === chapterListRequestRef.current) {
+      setChapters(result.data || [])
+    }
+  }, [projectId])
+
+  useEffect(() => {
+    if (!projectId || !isActive) return
 
     const loadInitialData = async () => {
       try {
-        await fetchOutlines(projectId)
+        await refreshChapters()
       } catch {
-        console.error('Failed to load outlines')
+        console.error('Failed to load chapters')
       }
 
       try {
-        const result = (await chapterApi.list(projectId)) as unknown as {
-          data: ChapterItem[]
-        }
-        if (!cancelled) {
-          setChapters(result.data || [])
-        }
+        await refreshProjectOutlineData(projectId)
       } catch {
-        console.error('Failed to load chapters')
+        console.error('Failed to load outlines')
       }
     }
 
     void loadInitialData()
     return () => {
-      cancelled = true
+      chapterListRequestRef.current += 1
     }
-  }, [projectId, fetchOutlines])
+  }, [projectId, isActive, refreshChapters])
 
   useEffect(() => {
     if (!projectId || outlines.length === 0) return
@@ -300,22 +316,21 @@ export const NovelContent: React.FC = () => {
       currentOutline.project_id === projectId &&
       outlines.some((outline) => outline.id === currentOutline.id)
     if (currentOutlineAvailable) {
-      setLoadedOutlineId(currentOutline.id)
+      loadedOutlineIdRef.current = currentOutline.id
       return
     }
 
     const firstOutlineId = outlines[0].id
-    if (loadedOutlineId === firstOutlineId) return
-    setLoadedOutlineId(firstOutlineId)
+    if (loadedOutlineIdRef.current === firstOutlineId) return
+    loadedOutlineIdRef.current = firstOutlineId
     fetchTree(projectId, firstOutlineId).catch(() => {
       console.error('Failed to load outline tree')
-      setLoadedOutlineId(null)
+      loadedOutlineIdRef.current = null
     })
   }, [
     projectId,
     outlines,
     currentOutline,
-    loadedOutlineId,
     fetchTree,
   ])
 
@@ -330,12 +345,12 @@ export const NovelContent: React.FC = () => {
   const handleSelectOutline = async (outlineId: string) => {
     if (!projectId || !outlineId) return
     try {
-      setLoadedOutlineId(outlineId)
+      loadedOutlineIdRef.current = outlineId
       await fetchTree(projectId, outlineId)
       setExpandedVolumes(new Set())
       resetChapterSelection()
     } catch {
-      setLoadedOutlineId(null)
+      loadedOutlineIdRef.current = null
       showToast('error', '加载大纲失败')
     }
   }
@@ -379,6 +394,12 @@ export const NovelContent: React.FC = () => {
   useEffect(() => {
     if (!projectId) return
 
+    const refreshChapterList = () => {
+      void refreshChapters().catch(() => {
+        console.error('Failed to refresh chapters after Agent generation')
+      })
+    }
+
     const handleChapterContentUpdated = (event: Event) => {
       const detail = (event as CustomEvent<ChapterContentUpdatedDetail>).detail
       if (!detail || detail.projectId !== projectId) return
@@ -394,8 +415,13 @@ export const NovelContent: React.FC = () => {
             : chapter
         )
       )
+      refreshChapterList()
 
-      if (selectedChapter?.id !== detail.chapterId) return
+      if (
+        selectedChapter?.id !== detail.chapterId ||
+        detail.content === null
+      )
+        return
       if (autoSaveTimer.current) {
         clearTimeout(autoSaveTimer.current)
         autoSaveTimer.current = null
@@ -413,17 +439,25 @@ export const NovelContent: React.FC = () => {
       setWriteContext(null)
     }
 
+    const handleChaptersChanged = (event: Event) => {
+      const detail = (event as CustomEvent<ChaptersChangedDetail>).detail
+      if (!detail || detail.projectId !== projectId) return
+      refreshChapterList()
+    }
+
     window.addEventListener(
       CHAPTER_CONTENT_UPDATED_EVENT,
       handleChapterContentUpdated
     )
+    window.addEventListener(CHAPTERS_CHANGED_EVENT, handleChaptersChanged)
     return () => {
       window.removeEventListener(
         CHAPTER_CONTENT_UPDATED_EVENT,
         handleChapterContentUpdated
       )
+      window.removeEventListener(CHAPTERS_CHANGED_EVENT, handleChaptersChanged)
     }
-  }, [projectId, selectedChapter?.id])
+  }, [projectId, refreshChapters, selectedChapter?.id])
 
   const selectChapter = async (chapter: ChapterItem) => {
     if (!projectId) return
@@ -1026,6 +1060,7 @@ export const NovelContent: React.FC = () => {
                 )}
               </div>
               <div className="flex gap-2">
+                <ReaderLauncher projectId={projectId!} chapterId={selectedChapter.id} content={editContent} disabled={generating || polishing} />
                 <Button
                   variant="outline"
                   size="sm"
@@ -1102,13 +1137,8 @@ export const NovelContent: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <textarea
-                  className="h-full w-full resize-none p-8 text-base leading-relaxed text-gray-800 focus:outline-none"
-                  value={editContent}
-                  onChange={(e) => handleContentChange(e.target.value)}
-                  placeholder="点击「AI 编写」生成章节内容，或直接在此输入..."
-                  style={{ minHeight: '100%' }}
-                />
+                <HighlightedTextarea key={selectedChapter.id} projectId={projectId!}
+                  chapterId={selectedChapter.id} value={editContent} onChange={handleContentChange} />
               )}
             </div>
           </>
@@ -1116,6 +1146,7 @@ export const NovelContent: React.FC = () => {
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
               <BookOpen className="mx-auto mb-4 h-16 w-16 text-gray-300" />
+              <div className="mb-4"><ReaderLauncher projectId={projectId!} /></div>
               <p className="text-gray-500">请从左侧选择章节开始阅读或编写</p>
               <p className="mt-1 text-sm text-gray-400">
                 展开卷目录，点击章节名称进入

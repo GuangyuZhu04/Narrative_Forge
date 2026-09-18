@@ -53,7 +53,7 @@ async def get_chapter(
     project: Project = Depends(verify_project_access),
 ):
     chapter = await chapter_service.get_by_id(db, chapter_id)
-    if not chapter:
+    if not chapter or chapter.project_id != project_id:
         raise ChapterNotFoundException()
     return chapter
 
@@ -77,8 +77,11 @@ async def update_chapter(
     db: AsyncSession = Depends(get_db),
     project: Project = Depends(verify_project_access),
 ):
+    existing = await chapter_service.get_by_id(db, chapter_id)
+    if not existing or existing.project_id != project_id:
+        raise ChapterNotFoundException()
     chapter = await chapter_service.update(db, chapter_id, data)
-    if not chapter:
+    if not chapter or chapter.project_id != project_id:
         raise ChapterNotFoundException()
     return chapter
 

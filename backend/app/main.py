@@ -28,6 +28,11 @@ from app.services.audiobook_service import audiobook_service
 
 
 async def ensure_runtime_schema(conn):
+    chapter_result = await conn.execute(text("PRAGMA table_info(chapters)"))
+    chapter_columns = {row[1] for row in chapter_result.fetchall()}
+    if "highlights" not in chapter_columns:
+        await conn.execute(text("ALTER TABLE chapters ADD COLUMN highlights JSON NOT NULL DEFAULT '[]'"))
+
     character_result = await conn.execute(text("PRAGMA table_info(characters)"))
     character_columns = {row[1] for row in character_result.fetchall()}
     if "biography" not in character_columns:

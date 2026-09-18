@@ -1,4 +1,8 @@
 import axios from 'axios'
+import type {
+  NovelAgentChatTurnRequest,
+  NovelAgentSessionMode,
+} from '@/types'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -228,13 +232,13 @@ export const novelAgentApi = {
     api.post(`/projects/${projectId}/novel-agent/write`, data, {
       timeout: 900000,
     }),
-  listSessions: (projectId: string, mode: string) =>
+  listSessions: (projectId: string, mode: NovelAgentSessionMode) =>
     api.get(`/projects/${projectId}/novel-agent/sessions`, {
       params: { mode },
     }),
   createSession: (
     projectId: string,
-    mode: string,
+    mode: NovelAgentSessionMode,
     name?: string
   ) =>
     api.post(`/projects/${projectId}/novel-agent/sessions`, {
@@ -243,12 +247,27 @@ export const novelAgentApi = {
     }),
   getSession: (projectId: string, sessionId: string) =>
     api.get(`/projects/${projectId}/novel-agent/sessions/${sessionId}`),
+  syncConfirmedArtifacts: (projectId: string, sessionId: string) =>
+    api.post(
+      `/projects/${projectId}/novel-agent/sessions/${sessionId}/sync-confirmed-artifacts`
+    ),
   renameSession: (projectId: string, sessionId: string, name: string) =>
     api.put(`/projects/${projectId}/novel-agent/sessions/${sessionId}`, {
       name,
     }),
   deleteSession: (projectId: string, sessionId: string) =>
     api.delete(`/projects/${projectId}/novel-agent/sessions/${sessionId}`),
+  chatTurnStream: (
+    projectId: string,
+    data: NovelAgentChatTurnRequest,
+    signal?: AbortSignal
+  ) =>
+    fetch(`/api/v1/projects/${projectId}/novel-agent/chat-turn-stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      signal,
+    }),
 }
 
 export const discussionApi = {
@@ -326,6 +345,14 @@ export const systemSettingsApi = {
 }
 
 const ACTIVE_LLM_KEY = 'nwa_active_llm_config_id'
+
+export function setActiveLLMConfigId(configId: string | null): void {
+  if (configId) {
+    localStorage.setItem(ACTIVE_LLM_KEY, configId)
+  } else {
+    localStorage.removeItem(ACTIVE_LLM_KEY)
+  }
+}
 
 export async function getActiveLLMConfigId(): Promise<string | null> {
   const cached = localStorage.getItem(ACTIVE_LLM_KEY)

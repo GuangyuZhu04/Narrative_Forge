@@ -316,10 +316,10 @@ VOLUME (卷)
 |------|------|------|------|
 | `id` | UUID | 自动 | Session ID；未指定名称时同时作为默认名称 |
 | `project_id` | UUID (FK) | ✓ | 所属项目 |
-| `mode` | VARCHAR(30) | ✓ | `generate` / `continue_edit` |
+| `mode` | VARCHAR(30) | ✓ | `generate` / `chat_generate` / `continue_edit` |
 | `name` | VARCHAR(200) | ✓ | 可修改的会话显示名称 |
-| `status` | VARCHAR(20) | ✓ | `idle` / `running` / `completed` / `failed` |
-| `request_payload` | JSON | - | 最近一次运行请求 |
+| `status` | VARCHAR(20) | ✓ | `idle` / `planning` / `awaiting_input` / `awaiting_confirmation` / `running` / `completed` / `failed` |
+| `request_payload` | JSON | - | 最近一次运行请求；对话模式的 `chat_state` 保存消息、阶段、问题、产物与执行检查点 |
 | `plan` | JSON | - | Agent 生成蓝图或续写改编 Plan |
 | `result` | JSON | - | 完整结果或续写失败时的部分动作结果 |
 | `steps` | JSON | - | 最近一次运行结束时的步骤状态 |

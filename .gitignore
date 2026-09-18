@@ -10,6 +10,7 @@ __pycache__/
 venv/
 *.egg-info/
 
+
 # Node / frontend
 node_modules/
 frontend/node_modules/

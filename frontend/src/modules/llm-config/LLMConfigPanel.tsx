@@ -7,6 +7,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Select'
 import { SystemPromptSettings } from '@/modules/system-settings/SystemPromptSettings'
 import { AudiobookSystemSettings } from '@/modules/system-settings/AudiobookSystemSettings'
+import { WallpaperSettings } from '@/modules/system-settings/WallpaperSettings'
+import { TypographySettings } from '@/modules/system-settings/TypographySettings'
 import {
   Plus,
   Trash2,
@@ -16,6 +18,7 @@ import {
   Zap,
   SlidersHorizontal,
   Headphones,
+  Palette,
 } from 'lucide-react'
 import type { LLMConfig } from '@/types'
 
@@ -25,13 +28,14 @@ const PROVIDER_PRESETS = {
   deepseek: {
     label: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com',
-    models: ['deepseek-v4-pro'],
-    messageFormat: 'OpenAI Chat Completions: messages[]',
+    models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+    messageFormat:
+      'Responses API（v4-flash / v4-pro；可通过 Agent 开关或 default_params.api_mode 回退 Chat Completions）',
   },
   openai: {
     label: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
-    models: ['gpt-5.5'],
+    models: ['gpt-5.6', 'gpt-5.5'],
     messageFormat: 'Responses API: instructions + input[]',
   },
   anthropic: {
@@ -55,7 +59,7 @@ const PROVIDER_PRESETS = {
   openai_compatible: {
     label: 'OpenAI Compatible',
     baseUrl: 'https://api.openai.com/v1',
-    models: ['deepseek-v4-pro', 'gpt-5.5'],
+    models: ['deepseek-v4-pro', 'gpt-5.6'],
     messageFormat: 'OpenAI Chat Completions: messages[]',
   },
 }
@@ -78,14 +82,14 @@ export const LLMConfigPanel: React.FC = () => {
   )
   const [showCreate, setShowCreate] = useState(false)
   const [testing, setTesting] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'llm' | 'prompts' | 'audiobook'>(
-    'llm'
-  )
+  const [activeTab, setActiveTab] = useState<
+    'llm' | 'prompts' | 'audiobook' | 'appearance'
+  >('llm')
   const [newConfig, setNewConfig] = useState({
     provider: 'deepseek',
     api_key: '',
     base_url: 'https://api.deepseek.com',
-    model_name: 'deepseek-v4-pro',
+    model_name: 'deepseek-v4-flash',
   })
   const selectedPreset = getProviderPreset(newConfig.provider)
   const modelDatalistId = 'llm-model-presets'
@@ -116,7 +120,7 @@ export const LLMConfigPanel: React.FC = () => {
       provider: 'deepseek',
       api_key: '',
       base_url: 'https://api.deepseek.com',
-      model_name: 'deepseek-v4-pro',
+      model_name: 'deepseek-v4-flash',
     })
     setShowCreate(false)
     await loadConfigs()
@@ -163,8 +167,8 @@ export const LLMConfigPanel: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-gray-50">
-      <header className="flex items-center justify-between border-b bg-white px-6 py-4">
+    <div className="app-wallpaper-root flex h-screen flex-col bg-gray-50">
+      <header className="app-wallpaper-surface flex items-center justify-between border-b bg-white px-6 py-4">
         <div className="flex items-center gap-3">
           <Button
             variant="ghost"
@@ -183,7 +187,7 @@ export const LLMConfigPanel: React.FC = () => {
       </header>
 
       <main className="flex-1 overflow-auto p-6">
-        <div className="mb-5 flex gap-2">
+        <div className="mb-5 flex flex-wrap gap-2">
           <Button
             variant={activeTab === 'llm' ? 'default' : 'outline'}
             size="sm"
@@ -205,9 +209,21 @@ export const LLMConfigPanel: React.FC = () => {
           >
             <Headphones className="mr-1 h-4 w-4" /> 有声书设置
           </Button>
+          <Button
+            variant={activeTab === 'appearance' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setActiveTab('appearance')}
+          >
+            <Palette className="mr-1 h-4 w-4" /> 外观
+          </Button>
         </div>
 
-        {activeTab === 'audiobook' ? (
+        {activeTab === 'appearance' ? (
+          <div className="space-y-5">
+            <TypographySettings />
+            <WallpaperSettings />
+          </div>
+        ) : activeTab === 'audiobook' ? (
           <AudiobookSystemSettings />
         ) : activeTab === 'prompts' ? (
           <SystemPromptSettings />

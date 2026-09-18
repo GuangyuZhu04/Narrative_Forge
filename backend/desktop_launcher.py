@@ -9,6 +9,22 @@ import webbrowser
 from pathlib import Path
 
 import uvicorn
+from starlette.exceptions import HTTPException
+from starlette.staticfiles import StaticFiles
+
+
+class DesktopStaticFiles(StaticFiles):
+    """Serve bundled assets and allow direct navigation to React workspace routes."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            route_path = path.replace("\\", "/")
+            is_page = route_path in {"settings", "projects"} or route_path.startswith("projects/")
+            if exc.status_code != 404 or scope["method"] not in {"GET", "HEAD"} or not is_page:
+                raise
+            return await super().get_response("index.html", scope)
 
 
 def app_dir() -> Path:
@@ -93,7 +109,12 @@ def main() -> None:
     print("关闭此窗口即可退出程序。")
     if os.environ.get("NARRATIVE_FORGE_NO_BROWSER") != "1":
         open_browser_later(url)
-    uvicorn.run("app.main:app", host="127.0.0.1", port=port, log_level="info")
+    # Import after runtime environment setup; mount after all API routes.
+    from app.main import app
+
+    if frontend_dir:
+        app.mount("/", DesktopStaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
 
 
 if __name__ == "__main__":

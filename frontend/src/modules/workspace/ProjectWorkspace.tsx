@@ -18,9 +18,11 @@ import {
   Headphones,
   Sparkles,
   FilePenLine,
+  Bot,
 } from 'lucide-react'
 
 const workspaceNavItems = [
+  { path: 'agent-chat', label: '对话创作', icon: Bot },
   { path: 'agent', label: 'Agent 生成', icon: Sparkles },
   { path: 'agent-continue', label: 'Agent 续写改编', icon: FilePenLine },
   { path: 'outline', label: '大纲', icon: FileText },
@@ -100,9 +102,9 @@ export const ProjectWorkspace: React.FC = () => {
   }, [activeCacheKey])
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="app-wallpaper-root flex h-screen bg-gray-50">
       <aside
-        className={`flex flex-col border-r bg-white transition-width ${
+        className={`app-wallpaper-surface flex flex-col border-r bg-white transition-width ${
           sidebarOpen ? 'w-56' : 'w-14'
         }`}
       >
